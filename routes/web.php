@@ -53,8 +53,10 @@ Route::controller(PropertyController::class)->group(function () {
 
 Route::resource('halal', HalalController::class);
 
-Route::post('/event/midtrans/create-transaction', [OrderController::class, 'createMidtransTransaction'])->name('event.midtrans.create-transaction');
-Route::post('/event/register/free', [OrderController::class, 'registerFree'])->name('event.register.free');
+Route::controller(OrderController::class)->group(function () {
+    Route::post('/event/midtrans/create-transaction', 'createMidtransTransaction')->name('event.midtrans.create-transaction');;
+    Route::post('/event/register/free', 'registerFree')->name('event.register.free');
+});
 
 //ticket
 Route::controller(TicketController::class)->group(function () {
@@ -67,10 +69,8 @@ Route::controller(TicketController::class)->group(function () {
 
 Route::middleware(['guest'])->group(function () {
     Route::controller(AuthController::class)->group(function () {
-        // login
         Route::get('login', 'login')->name('login');
         Route::post('login', 'postLogin')->name('login.post');
-        // // register
         Route::get('register', 'register')->name('register');
         Route::post('register', 'postRegister')->name('register.post');
     });
