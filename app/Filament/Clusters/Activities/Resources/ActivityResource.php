@@ -5,11 +5,10 @@ namespace App\Filament\Clusters\Activities\Resources;
 use App\Filament\Clusters\Activities;
 use App\Filament\Clusters\Activities\Resources\ActivityResource\Pages;
 use App\Models\Activity;
-use Filament\Forms\Components\Card;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\FileUpload;
-use Filament\Forms\Components\Group;
 use Filament\Forms\Components\RichEditor;
+use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -44,21 +43,111 @@ class ActivityResource extends Resource
     public static function form(Form $form): Form
     {
         return $form
+            ->columns(3)
             ->schema([
-                Card::make()
+
+                // ===== BARIS ATAS: info utama (kiri) + gambar (kanan) =====
+                Section::make('Informasi Kegiatan')
+                    ->description('Judul, kategori, waktu, dan lokasi kegiatan.')
+                    ->icon('heroicon-o-pencil-square')
+                    ->columnSpan(['lg' => 2])
+                    ->columns(2)
                     ->schema([
-                        Group::make()
-                            ->schema([
-                                TextInput::make('activity_title')
+                        TextInput::make('activity_title')
+                            ->label('Judul Kegiatan')
+                            ->placeholder('Contoh: Sosialisasi Perizinan Usaha UMKM')
+                            ->live(onBlur: true)
+                            ->afterStateUpdated(fn(Set $set, ?string $state) => $set('activity_slug', Str::slug($state)))
+                            ->required()
+                            ->maxLength(255)
+                            ->columnSpanFull(),
+
+                        TextInput::make('activity_slug')
+                            ->label('Slug (URL)')
+                            ->placeholder('Terisi otomatis dari judul')
+                            ->prefixIcon('heroicon-o-link')
+                            ->helperText('Terisi otomatis sesuai judul.')
+                            ->readOnly()
+                            ->dehydrated()
+                            ->required()
+                            ->unique(ignoreRecord: true)
+                            ->maxLength(255)
+                            ->columnSpanFull(),
+
+                        Select::make('activity_category_uuid')
+                            ->label('Kategori Kegiatan')
+                            ->relationship(name: 'activityCategory', titleAttribute: 'activity_category_name')
+                            ->searchable()
+                            ->preload()
+                            ->createOptionForm([
+                                TextInput::make('activity_category_name')
+                                    ->label('Nama Kategori')
                                     ->live(onBlur: true)
-                                    ->afterStateUpdated(fn(Set $set, ?string $state) => $set('activity_slug', Str::slug($state)))
-                                    ->required(),
-                                TextInput::make('activity_slug')
-                                    ->label('Activity Slug')
-                                    ->placeholder('Auto Generated')
-                                    ->required(),
-                            ])->columns(2),
+                                    ->afterStateUpdated(fn(Set $set, ?string $state) => $set('activity_category_slug', Str::slug($state)))
+                                    ->required()
+                                    ->maxLength(255),
+                                TextInput::make('activity_category_slug')
+                                    ->label('Slug Kategori')
+                                    ->required()
+                                    ->maxLength(255),
+                            ])
+                            ->helperText('Belum ada kategori? Klik tanda + untuk membuat baru.')
+                            ->required(),
+
+                        DateTimePicker::make('activity_date')
+                            ->label('Tanggal & Waktu')
+                            ->native(false)
+                            ->seconds(false)
+                            ->displayFormat('d/m/Y H:i')
+                            ->prefixIcon('heroicon-o-calendar-days')
+                            ->required(),
+
+                        Textarea::make('activity_location')
+                            ->label('Lokasi Kegiatan')
+                            ->placeholder('Jl. Raya No. 1, Kelurahan, Kecamatan, Kota, Provinsi')
+                            ->rows(3)
+                            ->maxLength(255)
+                            ->required()
+                            ->columnSpanFull(),
+                    ]),
+
+                Section::make('Gambar Utama')
+                    ->icon('heroicon-o-photo')
+                    ->columnSpan(['lg' => 1])
+                    ->schema([
+                        FileUpload::make('activity_image')
+                            ->hiddenLabel()
+                            ->image()
+                            ->disk('public')
+                            ->directory('img_activities')
+                            ->optimize('webp')
+                            ->maxSize(2048)
+                            ->downloadable()
+                            ->imageEditor()
+                            ->imageEditorAspectRatios([
+                                '16:9',
+                                '4:3',
+                                '1:1',
+                            ])
+                            ->imagePreviewHeight('180')
+                            ->helperText('Rasio 16:9 disarankan, maks. 2 MB.')
+                            ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
+                                $slug = Str::of('activity_' . ($get('activity_title') ?: 'activity'))
+                                    ->lower()
+                                    ->slug('_');
+                                return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
+                            })
+                            ->required(),
+                    ]),
+
+                // ===== BARIS BAWAH: deskripsi selebar penuh =====
+                Section::make('Deskripsi Kegiatan')
+                    ->description('Ceritakan jalannya kegiatan. Gunakan heading (H2/H3) agar mudah dibaca.')
+                    ->icon('heroicon-o-document-text')
+                    ->columnSpanFull()
+                    ->schema([
                         RichEditor::make('activity_description')
+                            ->hiddenLabel()
                             ->toolbarButtons([
                                 'attachFiles',
                                 'blockquote',
@@ -78,55 +167,9 @@ class ActivityResource extends Resource
                             ->fileAttachmentsDisk('public')
                             ->fileAttachmentsDirectory('img_activities')
                             ->fileAttachmentsVisibility('public')
+                            ->extraInputAttributes(['style' => 'min-height: 32rem;'])
                             ->required()
                             ->columnSpanFull(),
-                        Group::make()
-                            ->schema([
-                                Select::make('activity_category_uuid')
-                                    ->label('Activity Category')
-                                    ->relationship(name: 'activityCategory', titleAttribute: 'activity_category_name')
-                                    ->createOptionForm([
-                                        TextInput::make('activity_category_name')
-                                            ->live(onBlur: true)
-                                            ->afterStateUpdated(fn(Set $set, ?string $state) => $set('activity_category_slug', Str::slug($state)))
-                                            ->required(),
-                                        TextInput::make('activity_category_slug')
-                                            ->required()
-                                    ]),
-                                // ->searchable(),
-                                FileUpload::make('activity_image')
-                                    ->image()
-                                    ->disk('public')->directory('img_activities')
-                                    ->required()
-                                    ->optimize('webp')
-                                    ->downloadable()
-                                    ->image()
-                                    ->imageEditor()
-                                    ->imageEditorAspectRatios([
-                                        '16:9',
-                                        '4:3',
-                                        '1:1',
-                                    ])->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
-                                        $title = 'activity_' . $get('activity_title') ?: 'activity';
-
-                                        $slug = Str::of($title)
-                                            ->lower()
-                                            ->replace(' ', '_')
-                                            ->slug('_');
-                                        return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
-                                    }),
-                            ])->columns(2),
-                        Group::make()
-                            ->schema([
-                                DateTimePicker::make('activity_date')
-                                    ->label('Activity Date')
-                                    ->required(),
-                                TextArea::make('activity_location')
-                                    ->label('Activity Location')
-                                    ->placeholder('Jl. Raya, No. 1, Kelurahan, Kecamatan, Kota, Provinsi')
-                                    ->required()
-                                    ->maxLength(255),
-                            ])->columns(2),
                     ]),
             ]);
     }
@@ -171,6 +214,12 @@ class ActivityResource extends Resource
                 //
             ])
             ->actions([
+                Action::make('visit')
+                    ->label('Visit')
+                    ->icon('heroicon-o-link')
+                    ->color('success')
+                    ->url(fn($record) => config('app.url') . '/activity/' . $record->activity_slug)
+                    ->openUrlInNewTab(),
                 ViewAction::make(),
                 EditAction::make(),
                 DeleteAction::make(),

@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\TrustedHubResource\Pages;
 use App\Models\TrustedHub;
+use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Form;
@@ -15,6 +16,7 @@ use Filament\Tables\Actions\BulkActionGroup;
 use Filament\Tables\Actions\DeleteBulkAction;
 use Filament\Tables\Actions\EditAction;
 use Filament\Tables\Actions\DeleteAction;
+use Illuminate\Support\Str;
 
 class TrustedHubResource extends Resource
 {
@@ -28,15 +30,24 @@ class TrustedHubResource extends Resource
     {
         return $form
             ->schema([
-                TextInput::make('trustedhub_url')
-                    ->name('Url')
-                    ->required()
-                    ->columnSpanFull()
-                    ->maxLength(255),
-                Textarea::make('trustedhub_description')
-                    ->name('description')
-                    ->required()
-                    ->columnSpanFull(),
+                Section::make('Informasi Trusted Hub')
+                    ->description('Tautan dan deskripsi singkat Trusted Hub.')
+                    ->icon('heroicon-o-shield-check')
+                    ->schema([
+                        TextInput::make('trustedhub_url')
+                            ->label('URL')
+                            ->placeholder('https://www.contoh.com')
+                            ->prefixIcon('heroicon-o-link')
+                            ->helperText('Tulis lengkap dengan https://')
+                            ->required()
+                            ->maxLength(255),
+
+                        Textarea::make('trustedhub_description')
+                            ->label('Deskripsi')
+                            ->placeholder('Jelaskan secara singkat tentang Trusted Hub ini')
+                            ->rows(5)
+                            ->required(),
+                    ]),
             ]);
     }
 
@@ -49,7 +60,13 @@ class TrustedHubResource extends Resource
                     ->label('No'),
                 TextColumn::make('trustedhub_url')
                     ->label('URL')
-                    ->searchable(),
+                    ->searchable()
+                    ->limit(50)
+                    // tambahkan https:// bila belum ada, supaya link bisa dibuka
+                    ->url(fn($record) => Str::startsWith($record->trustedhub_url, ['http://', 'https://'])
+                        ? $record->trustedhub_url
+                        : 'https://' . $record->trustedhub_url)
+                    ->openUrlInNewTab(),
                 TextColumn::make('trustedhub_description')
                     ->label('Description')
                     ->limit(50)
@@ -60,6 +77,7 @@ class TrustedHubResource extends Resource
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
+            ->defaultSort('created_at', 'desc')
             ->filters([
                 //
             ])

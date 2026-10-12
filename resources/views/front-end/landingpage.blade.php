@@ -124,6 +124,11 @@
                         Properti
                     </a>
 
+                    <a href="{{ route('about-us') }}"
+                        class="nav-link {{ request()->routeIs('about-us') ? 'text-white font-semibold border-b-2 border-white' : 'text-white/90 hover:text-white font-medium' }} transition-all duration-300">
+                        About Us
+                    </a>
+
                     @if (auth()->check())
                         <a href="https://www.nuparis.id/management" id="login-button"
                             class="inline-flex items-center justify-center bg-white text-primary px-5 py-2 rounded-full font-medium hover:bg-white/90 transition-all duration-200 shadow-lg">

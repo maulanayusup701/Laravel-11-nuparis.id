@@ -5,10 +5,10 @@ namespace App\Filament\Clusters\Articles\Resources;
 use App\Filament\Clusters\Articles;
 use App\Filament\Clusters\Articles\Resources\ArticleResource\Pages;
 use App\Models\Article;
-use Filament\Forms\Components\Card;
 use Filament\Forms\Components\FileUpload;
-use Filament\Forms\Components\Group;
+use Filament\Forms\Components\Grid;
 use Filament\Forms\Components\RichEditor;
+use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Form;
@@ -41,76 +41,115 @@ class ArticleResource extends Resource
     public static function form(Form $form): Form
     {
         return $form
+            ->columns(3)
             ->schema([
-                Card::make([
-                    Group::make()
-                        ->schema([
-                            TextInput::make('article_title')
-                                ->live(onBlur: true)
-                                ->afterStateUpdated(fn(Set $set, ?string $state) => $set('article_slug', Str::slug($state)))
-                                ->required(),
-                            TextInput::make('article_slug')
-                                ->placeholder('Auto Generated'),
-                        ])->columns(2),
-                    RichEditor::make('article_description')
-                        ->toolbarButtons([
-                            'attachFiles',
-                            'blockquote',
-                            'bold',
-                            'bulletList',
-                            'codeBlock',
-                            'h2',
-                            'h3',
-                            'italic',
-                            'link',
-                            'orderedList',
-                            'redo',
-                            'strike',
-                            'underline',
-                            'undo',
-                        ])
-                        ->fileAttachmentsDisk('public')
-                        ->fileAttachmentsDirectory('img_articles')
-                        ->fileAttachmentsVisibility('public')
-                        ->required()
-                        ->columnSpanFull(),
-                    Group::make()
-                        ->schema([
-                            Select::make('article_category_uuid')
-                                ->label('Article Category')
-                                ->relationship(name: 'articleCategory', titleAttribute: 'article_category_name')
-                                ->createOptionForm([
-                                    TextInput::make('article_category_name')
-                                        ->live(onBlur: true)
-                                        ->afterStateUpdated(fn(Set $set, ?string $state) => $set('article_category_slug', Str::slug($state)))
-                                        ->required(),
-                                    TextInput::make('article_category_slug')
-                                        ->required()
-                                ])->required(),
-                            // ->searchable(),
-                            FileUpload::make('article_image')
-                                ->image()
-                                ->disk('public')->directory('img_articles')
-                                ->required()
-                                ->optimize('webp')
-                                ->downloadable()
-                                ->image()
-                                ->imageEditor()
-                                ->imageEditorAspectRatios([
-                                    '16:9',
-                                    '4:3',
-                                    '1:1',
-                                ])->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
-                                    $title = 'article_' . $get('article_title') ?: 'article';
 
-                                    $slug = Str::of($title)
-                                        ->lower()
-                                        ->replace(' ', '_')
-                                        ->slug('_');
-                                    return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
-                                }),
-                        ])->columns(2),
-                ]),
+                // ===== BARIS ATAS: info utama (kiri) + gambar (kanan) =====
+                Section::make('Informasi Artikel')
+                    ->description('Judul, alamat URL, dan kategori artikel.')
+                    ->icon('heroicon-o-pencil-square')
+                    ->columnSpan(['lg' => 2])
+                    ->schema([
+                        TextInput::make('article_title')
+                            ->label('Judul')
+                            ->placeholder('Contoh: Panduan Mengurus NIB untuk Pemula')
+                            ->live(onBlur: true)
+                            ->afterStateUpdated(fn(Set $set, ?string $state) => $set('article_slug', Str::slug($state)))
+                            ->required()
+                            ->maxLength(255),
+
+                        TextInput::make('article_slug')
+                            ->label('Slug (URL)')
+                            ->placeholder('Terisi otomatis dari judul')
+                            ->prefixIcon('heroicon-o-link')
+                            ->helperText('Terisi otomatis sesuai judul.')
+                            ->readOnly()
+                            ->dehydrated()
+                            ->required()
+                            ->unique(ignoreRecord: true)
+                            ->maxLength(255),
+
+                        Select::make('article_category_uuid')
+                            ->label('Kategori Artikel')
+                            ->relationship(name: 'articleCategory', titleAttribute: 'article_category_name')
+                            ->searchable()
+                            ->preload()
+                            ->createOptionForm([
+                                TextInput::make('article_category_name')
+                                    ->label('Nama Kategori')
+                                    ->live(onBlur: true)
+                                    ->afterStateUpdated(fn(Set $set, ?string $state) => $set('article_category_slug', Str::slug($state)))
+                                    ->required()
+                                    ->maxLength(255),
+                                TextInput::make('article_category_slug')
+                                    ->label('Slug Kategori')
+                                    ->required()
+                                    ->maxLength(255),
+                            ])
+                            ->helperText('Belum ada kategori? Klik tanda + untuk membuat baru.')
+                            ->required(),
+                    ]),
+
+                Section::make('Gambar Utama')
+                    ->icon('heroicon-o-photo')
+                    ->columnSpan(['lg' => 1])
+                    ->schema([
+                        FileUpload::make('article_image')
+                            ->hiddenLabel()
+                            ->image()
+                            ->disk('public')
+                            ->directory('img_articles')
+                            ->optimize('webp')
+                            ->maxSize(2048)
+                            ->downloadable()
+                            ->imageEditor()
+                            ->imageEditorAspectRatios([
+                                '16:9',
+                                '4:3',
+                                '1:1',
+                            ])
+                            ->imagePreviewHeight('180')
+                            ->helperText('Rasio 16:9 disarankan, maks. 2 MB.')
+                            ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
+                                $slug = Str::of('article_' . ($get('article_title') ?: 'article'))
+                                    ->lower()
+                                    ->slug('_');
+                                return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
+                            })
+                            ->required(),
+                    ]),
+
+                // ===== BARIS BAWAH: isi artikel selebar penuh =====
+                Section::make('Isi Artikel')
+                    ->description('Tulis konten artikel. Gunakan heading (H2/H3) agar mudah dibaca.')
+                    ->icon('heroicon-o-document-text')
+                    ->columnSpanFull()
+                    ->schema([
+                        RichEditor::make('article_description')
+                            ->hiddenLabel()
+                            ->toolbarButtons([
+                                'attachFiles',
+                                'blockquote',
+                                'bold',
+                                'bulletList',
+                                'codeBlock',
+                                'h2',
+                                'h3',
+                                'italic',
+                                'link',
+                                'orderedList',
+                                'redo',
+                                'strike',
+                                'underline',
+                                'undo',
+                            ])
+                            ->fileAttachmentsDisk('public')
+                            ->fileAttachmentsDirectory('img_articles')
+                            ->fileAttachmentsVisibility('public')
+                            ->extraInputAttributes(['style' => 'min-height: 32rem;'])
+                            ->required()
+                            ->columnSpanFull(),
+                    ]),
             ]);
     }
 

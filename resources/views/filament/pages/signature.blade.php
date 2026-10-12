@@ -5,8 +5,8 @@
     </div>
 
     @if ($this->canPreview)
-        <x-filament::section class="mt-6">
-            <x-slot name="heading">📄 PDF Preview dengan QR Code</x-slot>
+        <x-filament::section class="mt-6" icon="heroicon-o-document-text">
+            <x-slot name="heading">PDF Preview dengan QR Code</x-slot>
             <x-slot name="description">
                 Pilih halaman, drag QR code ke posisi yang tepat, lalu klik <strong>Simpan Posisi</strong>.
             </x-slot>
@@ -297,6 +297,10 @@
                 var thumbsVisible = true;
                 var thumbsDone = 0;
 
+                // ── State loading saat simpan ─────────────────────────────────────
+                var isSaving = false;
+                var savingTimeout = null;
+
                 // ── QR state: simpan sebagai RASIO (0..1) bukan pixel ─────────────
                 // Ini kunci agar QR ikut zoom: konversi rasio → pixel saat apply
                 var qrRatioX = 0.5; // posisi tengah secara default
@@ -405,6 +409,46 @@
                         }
                     });
                     window.addEventListener('preview-cleared', resetAll);
+
+                    // Proses simpan selesai (berhasil / gagal) → sembunyikan overlay loading
+                    window.addEventListener('qr-position-saved', hideSaving);
+                }
+
+                // ── Overlay loading saat simpan ───────────────────────────────────
+                // Dibuat lewat JS & ditempel ke <body> supaya tidak ikut ter-render
+                // ulang / hilang saat Livewire memperbarui DOM komponen.
+                function getSavingOverlay() {
+                    var el = $('qr-saving-overlay');
+                    if (el) return el;
+
+                    el = document.createElement('div');
+                    el.id = 'qr-saving-overlay';
+                    el.className = 'qr-saving-overlay';
+                    el.setAttribute('role', 'alert');
+                    el.setAttribute('aria-busy', 'true');
+                    el.innerHTML =
+                        '<div class="qr-saving-card">' +
+                        '<div class="qr-saving-spinner"></div>' +
+                        '<div class="qr-saving-title">Menyimpan posisi QR…</div>' +
+                        '<div class="qr-saving-desc">Memproses dokumen, mohon tunggu dan jangan tutup halaman ini.</div>' +
+                        '</div>';
+                    document.body.appendChild(el);
+                    return el;
+                }
+
+                function showSaving() {
+                    isSaving = true;
+                    getSavingOverlay().style.display = 'flex';
+                    // Pengaman: sembunyikan otomatis kalau server tidak merespons
+                    clearTimeout(savingTimeout);
+                    savingTimeout = setTimeout(hideSaving, 180000);
+                }
+
+                function hideSaving() {
+                    isSaving = false;
+                    clearTimeout(savingTimeout);
+                    var el = $('qr-saving-overlay');
+                    if (el) el.style.display = 'none';
                 }
 
                 // ── Load PDF ──────────────────────────────────────────────────────
@@ -626,26 +670,26 @@
                 }
 
                 function saveQrPosition() {
+                    // Cegah klik ganda selama proses berjalan
+                    if (isSaving) return;
+
                     var qr = $('qr-overlay');
                     var canvas = $('pdf-canvas');
                     if (!qr || !canvas) return;
+
+                    // Tampilkan overlay loading
+                    showSaving();
 
                     var x = parseFloat(qr.getAttribute('data-x')) || 0;
                     var y = parseFloat(qr.getAttribute('data-y')) || 0;
                     var scaledQrSize = parseInt(qr.style.width) || qrSize;
 
-                    // Konversi ke koordinat PDF (origin kiri-bawah)
-                    // Gunakan rasio untuk akurasi, bukan pixel mentah
-                    // karena pixel bergantung pada zoom
-                    var pdfX = qrRatioX; // kirim rasio ke backend
-                    var pdfY = 1 - qrRatioY; // flip Y (PDF origin bottom-left)
-
                     var rect = qr.getBoundingClientRect();
 
                     dispatchToLivewire('save-qr-position', {
                         x: x,
-                        y: canvas.height - y - scaledQrSize, // pixel absolut untuk Imagick
-                        ratioX: qrRatioX, // rasio untuk referensi
+                        y: canvas.height - y - scaledQrSize, // pixel absolut
+                        ratioX: qrRatioX, // rasio yang dipakai backend
                         ratioY: qrRatioY,
                         scale: rect.width,
                         page: currentPage,
@@ -895,6 +939,82 @@
 
             #qr-overlay:hover {
                 box-shadow: 0 4px 20px rgba(59, 130, 246, 0.45) !important;
+            }
+
+            /* Spinner overlay "Menyimpan posisi QR" */
+            @keyframes qr-spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
+            .qr-saving-overlay {
+                position: fixed;
+                inset: 0;
+                z-index: 9999;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                background: rgba(17, 24, 39, .45);
+                backdrop-filter: blur(2px);
+            }
+
+            .qr-saving-card {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 14px;
+                max-width: 320px;
+                padding: 24px 32px;
+                text-align: center;
+                border-radius: 14px;
+                background: #ffffff;
+                border: 1px solid #e5e7eb;
+                box-shadow: 0 20px 50px rgba(0, 0, 0, .25);
+            }
+
+            .qr-saving-title {
+                font-size: 14px;
+                font-weight: 700;
+                color: #111827;
+            }
+
+            .qr-saving-desc {
+                font-size: 12px;
+                color: #6b7280;
+            }
+
+            .qr-saving-spinner {
+                width: 44px;
+                height: 44px;
+                border: 4px solid #e5e7eb;
+                border-top-color: #3b82f6;
+                border-radius: 9999px;
+                animation: qr-spin .8s linear infinite;
+            }
+
+            /* Mode gelap (Filament memakai class "dark" pada <html>) */
+            .dark .qr-saving-overlay {
+                background: rgba(0, 0, 0, .65);
+            }
+
+            .dark .qr-saving-card {
+                background: #1f2937;
+                border-color: #374151;
+                box-shadow: 0 20px 50px rgba(0, 0, 0, .6);
+            }
+
+            .dark .qr-saving-title {
+                color: #f9fafb;
+            }
+
+            .dark .qr-saving-desc {
+                color: #9ca3af;
+            }
+
+            .dark .qr-saving-spinner {
+                border-color: #374151;
+                border-top-color: #60a5fa;
             }
         </style>
     @endpush

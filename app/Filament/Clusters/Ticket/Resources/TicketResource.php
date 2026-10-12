@@ -38,6 +38,31 @@ class TicketResource extends Resource
         return false;
     }
 
+    /**
+     * Tombol Simpan & Batal disembunyikan jika tiket tersimpan berstatus "close"
+     * DAN status di form belum diubah. Begitu status diganti (mis. ke open/pending),
+     * tombol muncul lagi.
+     */
+    protected static function hideModalButtons($record, $livewire): bool
+    {
+        if ($record?->ticketStatus?->ticket_status_name !== 'close') {
+            return false;
+        }
+
+        $selectedUuid = $livewire->mountedTableActionsData[0]['ticket_status_uuid']
+            ?? $record->ticket_status_uuid;
+
+        return TicketStatus::find($selectedUuid)?->ticket_status_name === 'close';
+    }
+
+    /**
+     * Nama status yang sedang dipilih di form.
+     */
+    protected static function selectedStatusName(callable $get): ?string
+    {
+        return TicketStatus::find($get('ticket_status_uuid'))?->ticket_status_name;
+    }
+
     public static function form(Form $form): Form
     {
         return $form
@@ -92,11 +117,19 @@ class TicketResource extends Resource
                     ->live()
                     ->preload()
                     ->required(),
+
+                // Riwayat tetap tampil untuk status "open" DAN "close"
                 View::make('front-end.layouts.components.progress-note')
                     ->label('Riwayat Progress')
+                    ->viewData(fn($livewire) => [
+                        // Tombol edit/hapus progress terbaru: hanya saat tiket tidak terkunci
+                        'canManageProgress' => method_exists($livewire, 'isLockedClosed')
+                            && !$livewire->isLockedClosed(),
+                    ])
                     ->columnSpanFull()
-                    ->hidden(fn(callable $get) =>
-                    optional(TicketStatus::find($get('ticket_status_uuid')))->ticket_status_name !== 'open'),
+                    ->hidden(fn(callable $get) => !in_array(static::selectedStatusName($get), ['open', 'close'])),
+
+                // Form tambah progress: hanya saat "open" dan tiket belum selesai
                 Group::make([
                     RichEditor::make('progress')
                         ->label('Progress')
@@ -129,8 +162,7 @@ class TicketResource extends Resource
                 ])
                     ->columnSpanFull()
                     ->columns(1)
-                    ->hidden(fn(callable $get) =>
-                    optional(TicketStatus::find($get('ticket_status_uuid')))->ticket_status_name !== 'open'),
+                    ->hidden(fn(callable $get) => static::selectedStatusName($get) !== 'open'),
             ]);
     }
 
@@ -208,6 +240,10 @@ class TicketResource extends Resource
             ])
             ->actions([
                 EditAction::make()
+                    ->modalFooterActions(fn($action, $record, $livewire): array =>
+                    static::hideModalButtons($record, $livewire)
+                        ? []
+                        : [$action->getModalSubmitAction(), $action->getModalCancelAction()])
                     ->modalWidth('7xl')
                     ->slideOver(),
                 DeleteAction::make()
@@ -235,13 +271,11 @@ class TicketResource extends Resource
                     }),
             ])
             ->headerActions([
-                // EXPORT EXCEL - VERSI SEDERHANA
                 Action::make('exportExcel')
                     ->label('Export List Ticket')
                     ->color('success')
                     ->icon('heroicon-o-document-arrow-down')
                     ->action(function ($livewire) {
-                        // Ambil data sesuai filter
                         $query = $livewire->getFilteredTableQuery()
                             ->with(['ticketStatus', 'consultantSpecialization']);
 
@@ -253,20 +287,15 @@ class TicketResource extends Resource
                             return;
                         }
 
-                        // Buat teks filter untuk ditampilkan
                         $filters = $livewire->tableFilters;
                         $filterText = 'Semua Data';
 
-                        if (isset($filters['kategori_status']['status']) && !empty($filters['kategori_status']['status'])) {
-                            $statusList = $filters['kategori_status']['status'];
-                            $filterText = 'Status: ' . implode(' + ', $statusList);
+                        if (!empty($filters['kategori_status']['status'])) {
+                            $filterText = 'Status: ' . implode(' + ', $filters['kategori_status']['status']);
                         }
 
-                        // Nama file
-                        $date = now()->format('d_m_Y_H-i');
-                        $fileName = 'nuparis.id_export_ticket_' . $date . '.xlsx';
+                        $fileName = 'nuparis.id_export_ticket_' . now()->format('d_m_Y_H-i') . '.xlsx';
 
-                        // Notifikasi sukses dikirim SEBELUM return download
                         \Filament\Notifications\Notification::make()
                             ->success()
                             ->title('Export Berhasil')

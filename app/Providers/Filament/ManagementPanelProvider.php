@@ -11,24 +11,26 @@ use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
 use Filament\Http\Responses\Auth\Contracts\LoginResponse;
-use Filament\Navigation\NavigationItem;
+use Illuminate\Support\Facades\URL;
 use Filament\Pages;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\View\PanelsRenderHook;
 use Filament\Widgets;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\HtmlString;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 class ManagementPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
-        // URL::forceScheme('https');
+        URL::forceScheme('https');
         return $panel
             ->default()
             ->id('management')
@@ -77,13 +79,46 @@ class ManagementPanelProvider extends PanelProvider
                 DispatchServingFilamentEvent::class,
                 BlockMemberAccessToPanel::class,
             ])
+            // Cegah halaman bergeser ke bawah saat pindah langkah di Wizard
+            ->renderHook(
+                PanelsRenderHook::BODY_END,
+                fn(): HtmlString => new HtmlString(<<<'HTML'
+                <script>
+                    document.addEventListener('click', (e) => {
+                        const tombol = e.target.closest('button');
+                        if (!tombol) return;
+
+                        const teks = tombol.textContent.trim().toLowerCase();
+                        if (!['selanjutnya', 'sebelumnya', 'next', 'previous'].includes(teks)) return;
+
+                        const posisi = window.scrollY;
+                        const mulai = performance.now();
+                        let aktif = true;
+
+                        const lepas = () => { aktif = false; };
+                        ['wheel', 'touchmove', 'keydown', 'mousedown'].forEach((ev) =>
+                            window.addEventListener(ev, lepas, { once: true, passive: true })
+                        );
+
+                        const kunci = () => {
+                            if (!aktif || performance.now() - mulai > 1000) return;
+                            if (Math.abs(window.scrollY - posisi) > 2) {
+                                window.scrollTo({ top: posisi, behavior: 'instant' });
+                            }
+                            requestAnimationFrame(kunci);
+                        };
+                        requestAnimationFrame(kunci);
+                    }, true);
+                </script>
+            HTML)
+            )
             ->plugins([
                 FilamentShieldPlugin::make(),
             ])
             ->authMiddleware([
                 Authenticate::class,
                 // tidak perlu 'role:admin' di sini jika kamu sudah pakai middleware sendiri
-            ]);
+            ])->sidebarCollapsibleOnDesktop();
     }
 
     public function boot(): void

@@ -40,6 +40,11 @@
                     Properti
                 </a>
 
+                <a href="{{ route('about-us') }}"
+                    class="{{ request()->is('about-us*') || request()->is('about-us*') ? 'text-primary font-semibold border-b-2 border-primary' : 'text-slate-600 hover:text-primary' }} font-medium transition-colors duration-200">
+                    About Us
+                </a>
+
                 @if (auth()->check())
                     <a href="https://www.nuparis.id/management"
                         class="bg-primary hover:bg-red-700 text-white px-5 py-2 rounded-full font-medium shadow-lg transition-colors duration-200">

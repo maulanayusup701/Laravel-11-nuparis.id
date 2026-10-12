@@ -1,7 +1,7 @@
 <?php
 
-use Illuminate\Support\Facades\Log;
 use App\Http\Middleware\BlockMemberAccessToPanel;
+use App\Http\Middleware\SetLocale;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -12,6 +12,7 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Exceptions\ThrottleRequestsException;
 use Illuminate\Http\Request;
 use Illuminate\Session\TokenMismatchException;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -40,6 +41,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'block-member' => BlockMemberAccessToPanel::class,
         ]);
+        $middleware->alias(['set.locale' => SetLocale::class]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
 

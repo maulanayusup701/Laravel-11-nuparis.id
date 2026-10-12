@@ -4,10 +4,9 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\ReviewResource\Pages;
 use App\Models\Review;
-use Filament\Forms\Components\Card;
 use Filament\Forms\Components\FileUpload;
-use Filament\Forms\Components\Group;
 use Filament\Forms\Components\RichEditor;
+use Filament\Forms\Components\Section;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Form;
 use Filament\Forms\Set;
@@ -34,31 +33,92 @@ class ReviewResource extends Resource
     public static function form(Form $form): Form
     {
         return $form
+            ->columns(3)
             ->schema([
-                Card::make()
+
+                // ===== BARIS ATAS: info review (kiri) + avatar (kanan) =====
+                Section::make('Informasi Review')
+                    ->description('Nama pemberi review, rating, dan tautan sumber review.')
+                    ->icon('heroicon-o-star')
+                    ->columnSpan(['lg' => 2])
+                    ->columns(2)
                     ->schema([
-                        Group::make()
-                            ->schema([
-                                TextInput::make('review_fullname')
-                                    ->required(),
-                                TextInput::make('review_link')
-                                    ->live(onBlur: true)
-                                    ->url()
-                                    ->prefix('https://')
-                                    ->afterStateUpdated(fn(Set $set, ?string $state) => $set('review_slug', Str::slug($state)))
-                                    ->required(),
-                            ])->columns(2),
-                        Group::make()
-                            ->schema([
-                                TextInput::make('review_rating')
-                                    ->required()
-                                    ->maxLength(255),
-                                TextInput::make('review_slug')
-                                    ->required()
-                                    ->placeholder('Auto Generated'),
-                            ])->columns(2),
-                        RichEditor::make('review_content')
+                        TextInput::make('review_fullname')
+                            ->label('Nama Lengkap')
+                            ->placeholder('Contoh: Budi Santoso')
                             ->required()
+                            ->maxLength(255),
+
+                        TextInput::make('review_rating')
+                            ->label('Rating')
+                            ->placeholder('5')
+                            ->suffix('/ 5')
+                            ->numeric()
+                            ->minValue(1)
+                            ->maxValue(5)
+                            ->required(),
+
+                        TextInput::make('review_link')
+                            ->label('Link Review')
+                            ->placeholder('https://maps.app.goo.gl/...')
+                            ->prefixIcon('heroicon-o-link')
+                            ->helperText('Tulis lengkap dengan https://')
+                            ->live(onBlur: true)
+                            ->url()
+                            ->afterStateUpdated(fn(Set $set, ?string $state) => $set('review_slug', Str::slug($state)))
+                            ->required()
+                            ->columnSpanFull(),
+
+                        TextInput::make('review_slug')
+                            ->label('Slug')
+                            ->placeholder('Terisi otomatis dari link')
+                            ->prefixIcon('heroicon-o-hashtag')
+                            ->helperText('Terisi otomatis sesuai link review.')
+                            ->readOnly()
+                            ->dehydrated()
+                            ->required()
+                            ->columnSpanFull(),
+                    ]),
+
+                Section::make('Foto Profil')
+                    ->icon('heroicon-o-user-circle')
+                    ->columnSpan(['lg' => 1])
+                    ->schema([
+                        FileUpload::make('review_avatar')
+                            ->hiddenLabel()
+                            ->image()
+                            ->disk('public')
+                            ->directory('img_review')
+                            ->optimize('webp')
+                            ->maxSize(2048)
+                            ->downloadable()
+                            ->imageEditor()
+                            ->imageEditorAspectRatios([
+                                '1:1',
+                                '4:3',
+                                '16:9',
+                            ])
+                            ->imagePreviewHeight('160')
+                            ->helperText('Rasio 1:1 disarankan, maks. 2 MB.')
+                            ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
+                                $slug = Str::of('review_' . ($get('review_fullname') ?: 'review'))
+                                    ->lower()
+                                    ->slug('_')
+                                    ->limit(50);
+
+                                return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
+                            })
+                            ->required(),
+                    ]),
+
+                // ===== BARIS BAWAH: isi review selebar penuh =====
+                Section::make('Isi Review')
+                    ->description('Tulis testimoni dari pemberi review.')
+                    ->icon('heroicon-o-chat-bubble-bottom-center-text')
+                    ->columnSpanFull()
+                    ->schema([
+                        RichEditor::make('review_content')
+                            ->hiddenLabel()
                             ->toolbarButtons([
                                 'bold',
                                 'bulletList',
@@ -67,30 +127,9 @@ class ReviewResource extends Resource
                                 'underline',
                                 'undo',
                             ])
-                            ->columnSpanFull(),
-                        FileUpload::make('review_avatar')
-                            ->image()
-                            ->disk('public')->directory('img_review')
+                            ->extraInputAttributes(['style' => 'min-height: 14rem;'])
                             ->required()
-                            ->optimize('webp')
-                            ->downloadable()
-                            ->image()
-                            ->imageEditor()
-                            ->imageEditorAspectRatios([
-                                '16:9',
-                                '4:3',
-                                '1:1',
-                            ])->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
-                                $name = 'review_' . $get('review_fullname') ?: 'review';
-
-                                $slug = Str::of($name)
-                                    ->lower()
-                                    ->replace(' ', '_')
-                                    ->slug('_')
-                                    ->limit(50);
-
-                                return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
-                            }),
+                            ->columnSpanFull(),
                     ]),
             ]);
     }

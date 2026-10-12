@@ -2,412 +2,400 @@
 
 namespace App\Services;
 
-use App\Imports\GenericArrayImport;
-use App\Models\CertificateGenerate;
-use App\Models\CertificateItem;
-use App\Models\CertificateTemplate;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
-use Maatwebsite\Excel\Facades\Excel;
-use setasign\Fpdi\Fpdi;
-use Endroid\QrCode\Builder\Builder;
-use Endroid\QrCode\Encoding\Encoding;
-use Endroid\QrCode\ErrorCorrectionLevel;
-use Endroid\QrCode\RoundBlockSizeMode;
-use Endroid\QrCode\Writer\PngWriter;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
-class CertificateGeneratorService
+class SmartFormsApiService
 {
-    /**
-     * Batas jumlah baris yang diproses dari file CSV/Excel yang diupload.
-     */
-    public const MAX_ROWS = 5;
+    protected $baseUrl;
 
-    /**
-     * @return array{generate: CertificateGenerate, url: string|null, failedRows: array}
-     */
-    public function generate(CertificateTemplate $template, string $mode, array $manualRow = [], ?string $csvPath = null): array
+    public function __construct()
     {
-        $rows = $mode === 'manual'
-            ? [$this->normalizeRow($manualRow)]
-            : $this->buildCsvRows($template, $manualRow, $csvPath);
+        $this->baseUrl = config('services.smartforms.api_url');
+    }
 
-        $folder = 'certificate/generates/generate_' . now()->format('Ymd_His');
+    public function getTransactions(array $filters = [], int $page = 1, int $limit = 10): array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->get($this->baseUrl . '/transactions', array_merge([
+                'page'  => $page,
+                'limit' => $limit,
+            ], $filters));
 
-        // Dibuat DULUAN (bukan di akhir seperti sebelumnya), karena tiap
-        // CertificateItem yang dibuat di dalam loop butuh certificate_generate_id
-        // yang valid sejak awal. Total & file_path di-update lagi setelah loop.
-        $generate = CertificateGenerate::create([
-            'certificate_template_id' => $template->uuid,
-            'mode' => $mode,
-            'total_requested' => count($rows),
-            'total_success' => 0,
-            'total_failed' => 0,
-            'failed_detail' => null,
-            'file_path' => null,
-        ]);
-
-        $files = [];
-        $failedRows = [];
-
-        foreach ($rows as $index => $row) {
-            try {
-                $files[] = $this->generateOnePdf($template, $generate, $row, $folder, $index);
-            } catch (\Throwable $e) {
-                $failedRows[] = $this->rowLabel($row, $index) . ': ' . $e->getMessage();
+            if ($response->successful()) {
+                $data = $response->json();
+                return [
+                    'data'         => $data['data'] ?? [],
+                    'total'        => $data['meta']['total'] ?? 0,
+                    'current_page' => $data['meta']['current_page'] ?? 1,
+                    'last_page'    => $data['meta']['last_page'] ?? 1,
+                ];
             }
+
+            Log::error('SmartForms API Error: ' . $response->body());
+            return $this->emptyResult();
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception: ' . $e->getMessage());
+            return $this->emptyResult();
         }
-
-        // BARU: gak di-zip lagi kalau hasilnya lebih dari 1 file. Tiap
-        // sertifikat individual (CertificateItem) udah punya file_path
-        // sendiri-sendiri — biar semuanya bisa didownload satuan lewat
-        // riwayat, bukan digabung jadi 1 file zip. 'file_path' di
-        // CertificateGenerate (level batch) cuma keisi kalau memang cuma
-        // ada 1 sertifikat yang dihasilkan (mis. mode manual).
-        $filePath = count($files) === 1 ? $files[0] : null;
-
-        $generate->update([
-            'total_success' => count($files),
-            'total_failed' => count($failedRows),
-            'failed_detail' => $failedRows ? implode('; ', $failedRows) : null,
-            'file_path' => $filePath,
-        ]);
-
-        return [
-            'generate' => $generate,
-            'url' => $filePath ? Storage::disk('public')->url($filePath) : null,
-            'failedRows' => $failedRows,
-        ];
     }
 
-    protected function normalizeRow(array $row): array
+    public function getTransaction(string $uuid): ?array
     {
-        return [
-            // Field DINAMIS yang tercetak di sertifikat (field_key => value),
-            // sesuai field custom yang dibuat admin per template lewat
-            // "Kelola Field". Datang dari input Filament bernama "data.{field_key}".
-            'data' => $row['data'] ?? [],
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->get($this->baseUrl . '/transactions/' . $uuid);
 
-            // Field TETAP, sama untuk semua template — gak dicetak di PDF,
-            // cuma buat halaman verifikasi publik.
-            'valid_from' => $row['valid_from'] ?? null,
-            'valid_until' => $row['valid_until'] ?? null,
-            'deskripsi' => $row['deskripsi'] ?? null,
-            'catatan' => $row['catatan'] ?? null,
-        ];
-    }
-
-    /**
-     * Label buat identifikasi baris di pesan error/nama file — diambil dari
-     * nilai field dinamis pertama yang keisi, karena gak ada lagi field
-     * "nama" yang dijamin selalu ada.
-     */
-    protected function rowLabel(array $row, int $index): string
-    {
-        foreach (($row['data'] ?? []) as $value) {
-            if (filled($value)) {
-                return (string) $value;
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'] ?? null;
             }
-        }
 
-        return 'Baris ' . ($index + 1);
+            return null;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception: ' . $e->getMessage());
+            return null;
+        }
     }
 
-    /**
-     * Baca baris HEADER (baris pertama) dari file CSV/Excel — dipakai untuk
-     * nampilin pilihan kolom di UI "Pencocokan Kolom", sebelum file
-     * benar-benar diproses jadi sertifikat.
-     *
-     * @return array<int, string>
-     */
-    public function readHeaders(string $path): array
+    public function getStatistics(): ?array
     {
-        $rows = $this->readRawRows($path);
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->get($this->baseUrl . '/transactions/statistics');
 
-        if (empty($rows)) {
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'] ?? null;
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /* =========================================================
+     | PACKAGES (Pricelist)
+     |=========================================================*/
+
+    public function getPackages(): array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->get($this->baseUrl . '/pricelist');
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'] ?? [];
+            }
+
+            Log::error('SmartForms API Error (packages): ' . $response->body());
+            return [];
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (packages): ' . $e->getMessage());
             return [];
         }
+    }
 
-        return array_map(fn($v) => trim((string) $v), $rows[0]);
+    public function createPackage(array $payload): ?array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->post($this->baseUrl . '/pricelist', $payload);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'] ?? $data;
+            }
+
+            Log::error('SmartForms API Error (createPackage): ' . $response->body());
+            return null;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (createPackage): ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    public function updatePackage(string $id, array $payload): ?array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->put($this->baseUrl . '/pricelist/' . $id, $payload);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'] ?? $data;
+            }
+
+            Log::error('SmartForms API Error (updatePackage): ' . $response->body());
+            return null;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (updatePackage): ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    public function deletePackage(string $id): bool
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->delete($this->baseUrl . '/pricelist/' . $id);
+
+            if ($response->successful()) {
+                return true;
+            }
+
+            Log::error('SmartForms API Error (deletePackage): ' . $response->body());
+            return false;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (deletePackage): ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /* =========================================================
+     | DISCOUNTS
+     |=========================================================*/
+
+    public function getDiscounts(array $filters = [], int $page = 1, int $limit = 15): array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->get($this->baseUrl . '/discounts', array_merge([
+                'page'  => $page,
+                'limit' => $limit,
+            ], $filters));
+
+            if ($response->successful()) {
+                $data    = $response->json();
+                $payload = $data['data'] ?? [];
+
+                return [
+                    'data'         => $payload['data'] ?? [],
+                    'total'        => $payload['total'] ?? 0,
+                    'current_page' => $payload['current_page'] ?? 1,
+                    'last_page'    => $payload['last_page'] ?? 1,
+                ];
+            }
+
+            Log::error('SmartForms API Error (discounts): ' . $response->body());
+            return $this->emptyResult();
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (discounts): ' . $e->getMessage());
+            return $this->emptyResult();
+        }
+    }
+
+    public function getDiscount(string $code): ?array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->get($this->baseUrl . '/discounts/code/' . $code);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'] ?? null;
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (discount): ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    public function createDiscount(array $payload): ?array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->post($this->baseUrl . '/discounts', $payload);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'] ?? $data;
+            }
+
+            Log::error('SmartForms API Error (createDiscount): ' . $response->body());
+            return null;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (createDiscount): ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    public function updateDiscount(string $id, array $payload): ?array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->put($this->baseUrl . '/discounts/' . $id, $payload);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'] ?? $data;
+            }
+
+            Log::error('SmartForms API Error (updateDiscount): ' . $response->body());
+            return null;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (updateDiscount): ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    public function deleteDiscount(string $id): bool
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->delete($this->baseUrl . '/discounts/' . $id);
+
+            if ($response->successful()) {
+                return true;
+            }
+
+            Log::error('SmartForms API Error (deleteDiscount): ' . $response->body());
+            return false;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (deleteDiscount): ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /* =========================================================
+     | USERS
+     |=========================================================*/
+
+    public function getUsers(array $filters = [], int $page = 1, int $limit = 15): array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->get($this->baseUrl . '/users', array_merge([
+                'page'  => $page,
+                'limit' => $limit,
+            ], $filters));
+
+            if ($response->successful()) {
+                $data = $response->json();
+
+                return [
+                    'data'         => $data['data'] ?? [],
+                    'total'        => $data['total'] ?? count($data['data'] ?? []),
+                    'current_page' => $data['current_page'] ?? 1,
+                    'last_page'    => $data['last_page'] ?? 1,
+                ];
+            }
+
+            Log::error('SmartForms API Error (users): ' . $response->body());
+            return $this->emptyResult();
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (users): ' . $e->getMessage());
+            return $this->emptyResult();
+        }
+    }
+
+    public function getUser(string $id): ?array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->get($this->baseUrl . '/users/' . $id);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'] ?? null;
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (user): ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    public function createUser(array $payload): ?array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->post($this->baseUrl . '/users', $payload);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'] ?? $data;
+            }
+
+            Log::error('SmartForms API Error (createUser): ' . $response->body());
+            return null;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (createUser): ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    public function updateUser(string $id, array $payload): ?array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->put($this->baseUrl . '/users/' . $id, $payload);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'] ?? $data;
+            }
+
+            Log::error('SmartForms API Error (updateUser): ' . $response->body());
+            return null;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (updateUser): ' . $e->getMessage());
+            return null;
+        }
     }
 
     /**
-     * @return array<int, array<int, mixed>>
+     * Soft delete user. Endpoint ini tidak memerlukan Authorization header.
      */
-    protected function readRawRows(string $path): array
+    public function deleteUser(string $id): bool
     {
-        $import = new GenericArrayImport();
-        Excel::import($import, $path);
+        try {
+            $response = Http::withHeaders([
+                'Accept' => 'application/json',
+            ])->delete($this->baseUrl . '/users/' . $id);
 
-        // Maatwebsite\Excel selalu bungkus hasil per-sheet; ambil sheet pertama.
-        $rows = $import->rows;
-        if (isset($rows[0]) && is_array($rows[0]) && isset($rows[0][0]) && is_array($rows[0][0])) {
-            $rows = $rows[0];
+            if ($response->successful()) {
+                return true;
+            }
+
+            Log::error('SmartForms API Error (deleteUser): ' . $response->body());
+            return false;
+        } catch (\Exception $e) {
+            Log::error('SmartForms API Exception (deleteUser): ' . $e->getMessage());
+            return false;
         }
-
-        return $rows;
     }
 
-    /**
-     * Terapin mapping kolom (dari UI "Pencocokan Kolom") ke tiap baris data
-     * file, hasilkan array baris dengan bentuk yang SAMA seperti
-     * normalizeRow() (mode manual) — 'data', 'deskripsi', 'catatan',
-     * 'valid_from', 'valid_until' — supaya generateOnePdf() gak perlu tau
-     * bedanya baris ini dari manual atau dari file.
-     *
-     * @return array<int, array<string, mixed>>
-     */
-    protected function buildCsvRows(CertificateTemplate $template, array $formData, string $path): array
+    private function emptyResult(): array
     {
-        $rawRows = $this->readRawRows($path);
-
-        if (empty($rawRows)) {
-            throw new \RuntimeException('File kosong atau format tidak dikenali.');
-        }
-
-        $headers = array_map(fn($v) => trim((string) $v), $rawRows[0]);
-        $dataRows = array_slice($rawRows, 1, self::MAX_ROWS);
-
-        $mapping = $formData['mapping'] ?? [];
-        $mappingMode = $formData['mapping_mode'] ?? [];
-        $fixedValues = $formData['fixed_values'] ?? [];
-
-        // Field custom (bukan qrcode, bukan yang diarsipkan) yang dicetak di
-        // sertifikat. PENTING: urutan (orderBy created_at) HARUS SAMA PERSIS
-        // dengan urutan yang dipakai CertificateGenerate::buildPrintedFieldMappingSchema()
-        // di Filament Page — karena mapping field cetak sekarang dikirim
-        // sebagai "mapping.{index_angka}" (mapping.0, mapping.1, dst), BUKAN
-        // "mapping.{field_key}" lagi. Ini buat hindarin Livewire Entangle
-        // Error yang muncul kalau nama field berubah-ubah tiap template beda
-        // (field_key kan beda-beda tiap template, index angka lebih stabil).
-        $printedFields = $template->fields
-            ->filter(fn($f) => ! $f->is_archived && $f->field_key !== CertificateTemplate::RESERVED_QRCODE_KEY)
-            ->sortBy('created_at')
-            ->values();
-
-        // Dipakai KHUSUS untuk valid_from/valid_until — toggle "sama untuk
-        // semua" vs "per baris (dari kolom file)" masih berlaku buat 2 field
-        // tanggal ini (placeholder gak cocok buat tanggal).
-        $resolveDateField = function (string $key, array $assocRow) use ($mappingMode, $mapping, $fixedValues) {
-            $useColumn = ($mappingMode[$key] ?? 'fixed') === 'column';
-
-            if ($useColumn) {
-                $col = $mapping[$key] ?? null;
-                return $col !== null ? ($assocRow[$col] ?? null) : null;
-            }
-
-            return $fixedValues[$key] ?? null;
-        };
-
-        // Template teks Deskripsi & Catatan (BUKAN mapping kolom) — boleh
-        // berisi placeholder {field_key} yang diganti per baris di bawah.
-        $deskripsiTemplate = (string) ($fixedValues['deskripsi'] ?? '');
-        $catatanTemplate = (string) ($fixedValues['catatan'] ?? '');
-
-        $rows = [];
-        foreach ($dataRows as $rawRow) {
-            // baris kosong (biasanya sisa baris kosong di Excel) — skip
-            if (collect($rawRow)->every(fn($v) => trim((string) $v) === '')) {
-                continue;
-            }
-
-            $assocRow = [];
-            foreach ($headers as $i => $h) {
-                $assocRow[$h] = $rawRow[$i] ?? null;
-            }
-
-            $data = [];
-            foreach ($printedFields as $i => $field) {
-                $col = $mapping[$i] ?? null;
-                $data[$field->field_key] = $col !== null ? (string) ($assocRow[$col] ?? '') : '';
-            }
-
-            // Ganti tiap {field_key} di template Deskripsi/Catatan dengan
-            // nilai field itu DI BARIS INI — jadi otomatis beda tiap baris
-            // kalau admin nyisipin variabel, atau tetap sama kalau enggak.
-            $replacements = [];
-            foreach ($data as $key => $value) {
-                $replacements['{' . $key . '}'] = $value;
-            }
-
-            $rows[] = [
-                'data' => $data,
-                'deskripsi' => strtr($deskripsiTemplate, $replacements),
-                'catatan' => strtr($catatanTemplate, $replacements),
-                'valid_from' => $resolveDateField('valid_from', $assocRow),
-                'valid_until' => $resolveDateField('valid_until', $assocRow),
-            ];
-        }
-
-        if (empty($rows)) {
-            throw new \RuntimeException('Tidak ada baris data yang bisa diproses (file kosong setelah baris header).');
-        }
-
-        return $rows;
-    }
-
-    /**
-     * Import halaman pertama PDF template pakai FPDI, lalu gambar teks & QR code
-     * langsung di atasnya sesuai posisi yang sudah ditandai. Tidak ada rasterisasi
-     * (tidak butuh Imagick/Ghostscript) — hasilnya tetap PDF vector asli.
-     */
-    protected function generateOnePdf(CertificateTemplate $template, CertificateGenerate $generate, array $row, string $folder, int $index): string
-    {
-        $templatePath = Storage::disk('public')->path($template->background_image);
-
-        // Slug publik untuk URL verifikasi, dibuat SEBELUM PDF dirender karena
-        // QR code yang berisi link verifikasi ini harus ikut digambar di dalam PDF.
-        $slug = (string) Str::ulid();
-
-        $pdf = new Fpdi('P', 'pt');
-        $pdf->setSourceFile($templatePath);
-        $templateId = $pdf->importPage(1);
-        $size = $pdf->getTemplateSize($templateId);
-
-        $pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
-        $pdf->useTemplate($templateId);
-
-        $qrRelativePath = null;
-        $fieldsSnapshot = [];
-
-        foreach ($template->fields as $field) {
-            // Field yang sudah diarsipkan (pernah dipakai, lalu "dihapus" admin)
-            // gak ikut digambar / dicatat lagi di generate baru.
-            if ($field->is_archived) {
-                continue;
-            }
-
-            // posisi disimpan dalam % (0-100), konversi ke koordinat pt sesuai ukuran halaman asli
-            $x = ($field->x / 100) * $size['width'];
-            $y = ($field->y / 100) * $size['height'];
-
-            if ($field->field_key === CertificateTemplate::RESERVED_QRCODE_KEY) {
-                $verifyUrl = route('certificate', $slug);
-
-                // Digenerate dengan resolusi lebih tinggi dari ukuran tampil di PDF
-                // (pt) supaya tetap tajam saat di-scan / dicetak, bukan cuma di layar.
-                // Pakai endroid/qr-code (basis GD) — sama seperti yang dipakai fitur
-                // toss (lihat Signature.php) — supaya TIDAK butuh ekstensi Imagick,
-                // beda dengan simplesoftwareio/simple-qrcode yang butuh Imagick.
-                $qrSize = (int) $field->font_size;
-
-                $qrCode = Builder::create()
-                    ->writer(new PngWriter())
-                    ->writerOptions([])
-                    ->data($verifyUrl)
-                    ->encoding(new Encoding('UTF-8'))
-                    ->errorCorrectionLevel(ErrorCorrectionLevel::High)
-                    ->size($qrSize * 4)
-                    ->margin(10)
-                    ->roundBlockSizeMode(RoundBlockSizeMode::Margin)
-                    ->build();
-
-                // Disimpan permanen (sebelumnya cuma tempfile lalu di-unlink) supaya
-                // bisa ditampilkan lagi di halaman verifikasi publik.
-                $qrRelativePath = "certificate/qrcodes/{$slug}.png";
-                Storage::disk('public')->makeDirectory('certificate/qrcodes');
-                Storage::disk('public')->put($qrRelativePath, $qrCode->getString());
-
-                $qrAbsPath = Storage::disk('public')->path($qrRelativePath);
-                $pdf->Image($qrAbsPath, $x - ($qrSize / 2), $y - ($qrSize / 2), $qrSize, $qrSize);
-
-                $field->increment('usage_count');
-                continue;
-            }
-
-            // Field CUSTOM dinamis — field_key-nya bisa apa aja sesuai yang
-            // dibuat admin lewat "Kelola Field", nilainya diambil dari
-            // $row['data'][field_key] yang dikirim form Generate Sertifikat.
-            $value = (string) ($row['data'][$field->field_key] ?? '');
-
-            [$r, $g, $b] = $this->hexToRgb($field->font_color);
-
-            // font_family, font_bold, dan font_underline yang diatur admin di
-            // panel "Atur Posisi" sekarang beneran dipakai (dulu selalu
-            // Helvetica polos apa pun setting-nya).
-            $fontFamily = in_array($field->font_family, ['Helvetica', 'Times', 'Courier'], true)
-                ? $field->font_family
-                : 'Helvetica';
-
-            $fontStyle = ($field->font_bold ? 'B' : '') . ($field->font_underline ? 'U' : '');
-
-            $pdf->SetTextColor($r, $g, $b);
-            $pdf->SetFont($fontFamily, $fontStyle, (int) $field->font_size);
-
-            $textWidth = $pdf->GetStringWidth($value);
-
-            // text_align (kiri/tengah/kanan) sekarang beneran dipakai (dulu
-            // selalu rata tengah apa pun setting-nya). $x diperlakukan sebagai
-            // titik jangkar sesuai perataan, sinkron sama transform di preview
-            // (mark-fields-modal.blade.php): rata kiri => $x ujung kiri teks,
-            // rata kanan => $x ujung kanan teks, rata tengah => $x tengah teks.
-            $textAlign = in_array($field->text_align, ['left', 'center', 'right'], true)
-                ? $field->text_align
-                : 'center';
-
-            $textX = match ($textAlign) {
-                'left' => $x,
-                'right' => $x - $textWidth,
-                default => $x - ($textWidth / 2),
-            };
-
-            // Text() menaruh baseline PERSIS di koordinat yang kita hitung
-            // sendiri (beda dengan Cell() yang vertical-align internalnya
-            // gak benar-benar center terhadap $y) — 0.35 * font_size adalah
-            // pendekatan umum jarak baseline-ke-tengah-huruf, supaya visualnya
-            // sepadan dengan center vertikal (flexbox) di preview.
-            $baselineY = $y + ($field->font_size * 0.35);
-            $pdf->Text($textX, $baselineY, $value);
-
-            $field->increment('usage_count');
-
-            // Snapshot label + value pada saat generate ini — supaya kalau
-            // nanti field di-rename/diarsipkan, sertifikat yang sudah terbit
-            // tetap nampilin data apa adanya waktu dibuat dulu.
-            $fieldsSnapshot[] = [
-                'key' => $field->field_key,
-                'label' => $field->label,
-                'value' => $value,
-            ];
-        }
-
-        $identifier = $this->rowLabel($row, $index);
-        // FIX: tambah suffix slug supaya nama file gak collide kalau ada 2 baris
-        // dengan identifier yang sama persis dalam satu batch CSV (sebelumnya cuma
-        // Str::slug($name).'.pdf', file kedua bakal menimpa file pertama).
-        $filename = $folder . '/' . Str::slug($identifier) . '-' . $slug . '.pdf';
-
-        Storage::disk('public')->makeDirectory($folder);
-        $pdf->Output(Storage::disk('public')->path($filename), 'F');
-
-        CertificateItem::create([
-            'certificate_generate_id' => $generate->uuid,
-            'certificate_template_id' => $template->uuid,
-            'slug' => $slug,
-            'fields' => $fieldsSnapshot,
-            'deskripsi' => $row['deskripsi'] ?? null,
-            'catatan' => $row['catatan'] ?? null,
-            'valid_from' => $row['valid_from'] ?? null,
-            'valid_until' => $row['valid_until'] ?? null,
-            'file_path' => $filename,
-            'qr_path' => $qrRelativePath,
-        ]);
-
-        return $filename;
-    }
-
-    protected function hexToRgb(string $hex): array
-    {
-        $hex = ltrim($hex, '#');
-
-        if (strlen($hex) === 3) {
-            $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
-        }
-
         return [
-            hexdec(substr($hex, 0, 2)),
-            hexdec(substr($hex, 2, 2)),
-            hexdec(substr($hex, 4, 2)),
+            'data'         => [],
+            'total'        => 0,
+            'current_page' => 1,
+            'last_page'    => 1,
         ];
     }
 }

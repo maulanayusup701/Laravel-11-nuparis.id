@@ -97,7 +97,7 @@ class Report extends Page implements HasForms
                 ->action('generateReport')
                 ->requiresConfirmation()
                 ->modalHeading('Lihat Progress')
-                ->modalDescription('Apakah Anda yakin ingin membuat laporan berdasarkan filter yang dipilih?')
+                ->modalDescription('Tampilkan progress tiket sesuai filter yang dipilih?')
                 ->modalSubmitActionLabel('Ya, Tampilkan')
                 ->modalCancelActionLabel('Batal')
                 ->visible(fn() => !empty($this->data['selected_tickets']) && !empty($this->data['date_range'])),
@@ -110,9 +110,10 @@ class Report extends Page implements HasForms
                 ->visible(fn() => $this->hasReport),
 
             PageAction::make('resetFilters')
-                ->label('⟳ Reset Filter')
+                ->label('Reset Filter')
                 ->color('gray')
                 ->icon('heroicon-o-arrow-path')
+                ->outlined()
                 ->action('resetFilters')
                 ->visible(fn() => !empty($this->data['selected_tickets'])),
         ];
@@ -376,14 +377,17 @@ class Report extends Page implements HasForms
     {
         return $form
             ->schema([
+                // ================= FILTER =================
                 Section::make('Filter Progress')
-                    ->description('Pilih kriteria laporan progress yang diinginkan')
+                    ->description('Pilih tiket dan periode laporan yang ingin ditampilkan.')
+                    ->icon('heroicon-o-funnel')
                     ->schema([
                         Grid::make(2)
                             ->schema([
                                 Select::make('selected_tickets')
-                                    ->label('Pilih Tiket')
-                                    ->placeholder('Pilih tiket terlebih dahulu...')
+                                    ->label('Tiket')
+                                    ->placeholder('Cari kode, judul, atau nama client...')
+                                    ->helperText('Ketik minimal kode tiket, judul, atau nama client.')
                                     ->options(function () {
                                         $result = $this->getTicketOptions();
                                         \Log::info('Ticket options count: ' . count($result));
@@ -400,6 +404,7 @@ class Report extends Page implements HasForms
 
                                 Select::make('date_range')
                                     ->label('Periode Laporan')
+                                    ->placeholder('Pilih periode...')
                                     ->options([
                                         'today' => 'Hari Ini',
                                         'yesterday' => 'Kemarin',
@@ -424,26 +429,34 @@ class Report extends Page implements HasForms
                             ])
                             ->columnSpanFull(),
 
-                        DatePicker::make('start_date')
-                            ->label('Tanggal Mulai')
-                            ->native(false)
-                            ->displayFormat('d/m/Y')
-                            ->visible(fn($get) => !empty($get('selected_tickets')) && $get('date_range') === 'custom')
-                            ->live()
-                            ->afterStateUpdated(fn() => $this->clearReport()),
+                        // Tanggal kustom: tampil berdampingan hanya saat periode "Kustom" dipilih
+                        Grid::make(2)
+                            ->schema([
+                                DatePicker::make('start_date')
+                                    ->label('Tanggal Mulai')
+                                    ->native(false)
+                                    ->displayFormat('d/m/Y')
+                                    ->prefixIcon('heroicon-m-calendar-days')
+                                    ->live()
+                                    ->afterStateUpdated(fn() => $this->clearReport()),
 
-                        DatePicker::make('end_date')
-                            ->label('Tanggal Akhir')
-                            ->native(false)
-                            ->displayFormat('d/m/Y')
-                            ->visible(fn($get) => !empty($get('selected_tickets')) && $get('date_range') === 'custom')
-                            ->live()
-                            ->afterStateUpdated(fn() => $this->clearReport()),
+                                DatePicker::make('end_date')
+                                    ->label('Tanggal Akhir')
+                                    ->native(false)
+                                    ->displayFormat('d/m/Y')
+                                    ->prefixIcon('heroicon-m-calendar-days')
+                                    ->live()
+                                    ->afterStateUpdated(fn() => $this->clearReport()),
+                            ])
+                            ->columnSpanFull()
+                            ->visible(fn($get) => !empty($get('selected_tickets')) && $get('date_range') === 'custom'),
 
+                        // Data laporan: muncul setelah tiket dan periode dipilih
                         Grid::make(2)
                             ->schema([
                                 TextInput::make('client_name')
                                     ->label('Nama Client')
+                                    ->prefixIcon('heroicon-m-user')
                                     ->placeholder(function ($get) {
                                         $originalName = $this->getOriginalClientName($get('selected_tickets'));
                                         return !empty($originalName) ? $originalName : 'Masukkan nama client...';
@@ -451,9 +464,9 @@ class Report extends Page implements HasForms
                                     ->helperText(function ($get) {
                                         $originalName = $this->getOriginalClientName($get('selected_tickets'));
                                         if (!empty($originalName)) {
-                                            return 'Nama client dari database: ' . $originalName;
+                                            return 'Diambil dari data tiket.';
                                         }
-                                        return '⚠️ Data client kosong, silakan isi manual';
+                                        return 'Data client kosong, silakan isi manual.';
                                     })
                                     ->default(function ($get) {
                                         return $this->getOriginalClientName($get('selected_tickets'));
@@ -462,39 +475,41 @@ class Report extends Page implements HasForms
 
                                 TextInput::make('proposal_for')
                                     ->label('Proposal For')
+                                    ->prefixIcon('heroicon-m-document-text')
                                     ->placeholder('Otomatis terisi dari tiket...')
                                     ->readOnly()
                                     ->columnSpan(1),
-                            ])
-                            ->visible(fn($get) => !empty($get('selected_tickets')) && !empty($get('date_range'))),
 
-                        Grid::make(2)
-                            ->schema([
                                 TextInput::make('proposal_id')
                                     ->label('Proposal ID')
-                                    ->placeholder('Masukkan Proposal ID...')
+                                    ->prefixIcon('heroicon-m-hashtag')
+                                    ->placeholder('Contoh: PRP-2026-001')
                                     ->columnSpan(1),
 
                                 TextInput::make('enquiry')
                                     ->label('Enquiry')
-                                    ->placeholder('Masukkan nomor/keterangan enquiry...')
+                                    ->prefixIcon('heroicon-m-chat-bubble-left-ellipsis')
+                                    ->placeholder('Nomor atau keterangan enquiry')
                                     ->columnSpan(1),
-                            ])
-                            ->visible(fn($get) => !empty($get('selected_tickets')) && !empty($get('date_range'))),
 
-                        TextInput::make('generated_by')
-                            ->label('Dibuat oleh')
-                            ->placeholder('Nama pembuat laporan...')
+                                TextInput::make('generated_by')
+                                    ->label('Dibuat Oleh')
+                                    ->prefixIcon('heroicon-m-pencil-square')
+                                    ->placeholder('Nama pembuat laporan')
+                                    ->columnSpanFull(),
+                            ])
                             ->columnSpanFull()
                             ->visible(fn($get) => !empty($get('selected_tickets')) && !empty($get('date_range'))),
-                    ])->columns(2),
+                    ])
+                    ->columns(2),
 
+                // ================= SUMMARY =================
                 Section::make('Summary')
-                    ->description('Tambahkan summary atau keterangan untuk laporan ini')
+                    ->description('Tambahkan ringkasan atau keterangan untuk laporan ini.')
                     ->icon('heroicon-o-pencil-square')
                     ->schema([
                         RichEditor::make('admin_notes')
-                            ->label('')
+                            ->hiddenLabel()
                             ->placeholder('Tulis summary di sini...')
                             ->toolbarButtons([
                                 'bold',

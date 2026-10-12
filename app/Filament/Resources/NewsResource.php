@@ -4,10 +4,9 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\NewsResource\Pages;
 use App\Models\News;
-use Filament\Forms\Components\Card;
 use Filament\Forms\Components\FileUpload;
-use Filament\Forms\Components\Group;
 use Filament\Forms\Components\RichEditor;
+use Filament\Forms\Components\Section;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Form;
 use Filament\Forms\Set;
@@ -34,40 +33,60 @@ class NewsResource extends Resource
     public static function form(Form $form): Form
     {
         return $form
+            ->columns(3)
             ->schema([
-                Card::make()
+
+                // ===== BARIS ATAS: info berita (kiri) + gambar (kanan) =====
+                Section::make('Informasi Berita')
+                    ->description('Judul, sumber, dan tautan berita.')
+                    ->icon('heroicon-o-newspaper')
+                    ->columnSpan(['lg' => 2])
                     ->schema([
                         TextInput::make('news_title')
+                            ->label('Judul Berita')
+                            ->placeholder('Contoh: UMKM Jabar Mulai Gunakan Perizinan Online')
+                            ->live(onBlur: true)
+                            ->afterStateUpdated(fn(Set $set, ?string $state) => $set('news_slug', Str::slug($state)))
                             ->required()
                             ->maxLength(255),
-                        TextInput::make('news_source')
-                            ->required()
-                            ->maxLength(255)
-                            ->placeholder('example: community whatsapp pojok wirausaha, jabar.tribunnews.com, etc'),
-                        TextInput::make('news_url')
-                            ->live(onBlur: true)
-                            ->prefix('https://')
-                            ->afterStateUpdated(fn(Set $set, ?string $state) => $set('news_slug', Str::slug($state)))
-                            ->required(),
+
                         TextInput::make('news_slug')
+                            ->label('Slug (URL)')
+                            ->placeholder('Terisi otomatis dari judul')
+                            ->prefixIcon('heroicon-o-link')
+                            ->helperText('Terisi otomatis sesuai judul.')
+                            ->readOnly()
+                            ->dehydrated()
                             ->required()
-                            ->placeholder('Auto Generated'),
-                        RichEditor::make('news_content')
-                            ->toolbarButtons([
-                                'bold',
-                                'bulletList',
-                                'link',
-                                'orderedList',
-                                'underline',
-                                'undo',
-                            ])->required()
-                            ->columnSpanFull(),
+                            ->maxLength(255),
+
+                        TextInput::make('news_source')
+                            ->label('Sumber Berita')
+                            ->placeholder('Contoh: jabar.tribunnews.com, komunitas WhatsApp Pojok Wirausaha')
+                            ->prefixIcon('heroicon-o-building-office')
+                            ->required()
+                            ->maxLength(255),
+
+                        TextInput::make('news_url')
+                            ->label('Link Berita')
+                            ->placeholder('jabar.tribunnews.com/berita/contoh')
+                            ->prefix('https://')
+                            ->helperText('Tulis tanpa https:// di depannya.')
+                            ->required()
+                            ->maxLength(255),
+                    ]),
+
+                Section::make('Gambar Berita')
+                    ->icon('heroicon-o-photo')
+                    ->columnSpan(['lg' => 1])
+                    ->schema([
                         FileUpload::make('news_image')
+                            ->hiddenLabel()
                             ->image()
                             ->disk('public')
                             ->directory('img_news')
-                            ->required()
                             ->optimize('webp')
+                            ->maxSize(2048)
                             ->downloadable()
                             ->imageEditor()
                             ->imageEditorAspectRatios([
@@ -75,20 +94,40 @@ class NewsResource extends Resource
                                 '4:3',
                                 '1:1',
                             ])
+                            ->imagePreviewHeight('180')
+                            ->helperText('Rasio 16:9 disarankan, maks. 2 MB.')
                             ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
-                                // ambil title dari form input
-                                $title = 'news_' . $get('news_title') ?? 'news';
-
-                                // buat slug + ganti spasi dengan _
-                                $slug = Str::of($title)
+                                // judul dari input form, fallback 'news' bila kosong
+                                $slug = Str::of('news_' . ($get('news_title') ?: 'news'))
                                     ->lower()
-                                    ->replace(' ', '_')
                                     ->slug('_');
 
-                                // tambah timestamp supaya unik
+                                // timestamp supaya unik
                                 return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
-                            }),
-                    ])->columns(2),
+                            })
+                            ->required(),
+                    ]),
+
+                // ===== BARIS BAWAH: isi berita selebar penuh =====
+                Section::make('Isi Berita')
+                    ->description('Ringkasan atau isi berita yang akan ditampilkan.')
+                    ->icon('heroicon-o-document-text')
+                    ->columnSpanFull()
+                    ->schema([
+                        RichEditor::make('news_content')
+                            ->hiddenLabel()
+                            ->toolbarButtons([
+                                'bold',
+                                'bulletList',
+                                'link',
+                                'orderedList',
+                                'underline',
+                                'undo',
+                            ])
+                            ->extraInputAttributes(['style' => 'min-height: 24rem;'])
+                            ->required()
+                            ->columnSpanFull(),
+                    ]),
             ]);
     }
 
@@ -112,7 +151,10 @@ class NewsResource extends Resource
                     ->searchable()
                     ->label('URL')
                     ->limit(50)
-                    ->url(fn($record) => $record->news_url)
+                    // tambahkan https:// bila belum ada, supaya link bisa dibuka
+                    ->url(fn($record) => Str::startsWith($record->news_url, ['http://', 'https://'])
+                        ? $record->news_url
+                        : 'https://' . $record->news_url)
                     ->openUrlInNewTab(),
                 TextColumn::make('created_at')
                     ->label('LOG')

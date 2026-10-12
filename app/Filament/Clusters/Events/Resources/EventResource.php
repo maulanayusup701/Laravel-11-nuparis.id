@@ -7,18 +7,21 @@ use App\Filament\Clusters\Events;
 use App\Filament\Clusters\Events\Resources\EventResource\Pages;
 use App\Models\Event;
 use Carbon\Carbon;
-use Filament\Forms\Components\Card;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\FileUpload;
-use Filament\Forms\Components\Group;
 use Filament\Forms\Components\RichEditor;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Forms\Components\ToggleButtons;
+use Filament\Forms\Components\Wizard;
+use Filament\Forms\Components\Wizard\Step;
 use Filament\Forms\Form;
+use Filament\Forms\Get;
 use Filament\Forms\Set;
 use Filament\Resources\Resource;
+use Filament\Support\RawJs;
 use Filament\Tables\Actions\Action;
 use Filament\Tables\Actions\BulkActionGroup;
 use Filament\Tables\Actions\DeleteAction;
@@ -29,6 +32,8 @@ use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\HtmlString;
 use Illuminate\Support\Str;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
@@ -48,158 +53,233 @@ class EventResource extends Resource
     {
         return $form
             ->schema([
-                Card::make()
-                    ->schema([
-                        Group::make()
-                            ->schema([
-                                TextInput::make('event_title')
-                                    ->live(onBlur: true)
-                                    ->afterStateUpdated(fn(Set $set, ?string $state) => $set('event_slug', Str::slug($state)))
-                                    ->required()
-                                    ->maxLength(255),
-                                TextInput::make('event_slug')
-                                    ->required()
-                                    ->placeholder('Auto Generated')
-                                    ->maxLength(255),
-                                TextInput::make('event_quota')
-                                    ->required()
-                                    ->placeholder('200')
-                                    ->numeric()
-                                    ->minValue(0),
-                                Toggle::make('event_is_active')
-                                    ->label('Status Regist')
-                                    ->onColor('success')
-                                    ->offColor('danger')
-                                    ->inline(false)
-                                    ->live()
-                                    ->disabled(
-                                        fn($get) =>
-                                        $get('event_date_end') &&
-                                            Carbon::parse($get('event_date_end'))->isPast()
-                                    )
-                                    ->afterStateHydrated(function ($set, $get) {
-                                        $endDate = $get('event_date_end');
-                                        if ($endDate && Carbon::parse($endDate)->isPast()) {
-                                            $set('event_is_active', false);
-                                        }
-                                    }),
-                            ])
-                            ->columns(4),
-                        Group::make()
-                            ->schema([
-                                TextInput::make('event_price')
-                                    ->required()
-                                    ->placeholder('0')
-                                    ->prefix('Rp ')
-                                    ->numeric()
-                                    ->minValue(0)
-                                    ->maxLength(255),
-                                Select::make('event_category_uuid')
-                                    ->label('Event Category')
-                                    ->relationship(name: 'eventCategory', titleAttribute: 'event_category_name')
-                                    ->searchable()
-                                    ->preload()
-                                    ->createOptionForm([
-                                        TextInput::make('event_category_name')
-                                            ->live(onBlur: true)
-                                            ->afterStateUpdated(fn(Set $set, ?string $state) => $set('event_category_slug', Str::slug($state)))
-                                            ->required()
-                                            ->maxLength(255),
-                                        TextInput::make('event_category_slug')
-                                            ->required()
-                                            ->maxLength(255)
-                                    ])
-                                    ->required(),
-                                TextInput::make('event_link')
-                                    ->label('Event Link Whatsapp Group')
-                                    ->url()
-                                    ->placeholder('https://chat.whatsapp.com/KODE_UNDANGAN')
-                                    ->prefix('https://')
-                                    ->maxLength(255)
-                                    ->required(),
-                            ])->columns(3),
-                        Group::make()
-                            ->schema([
-                                DateTimePicker::make('event_date_start')
-                                    ->required()
-                                    ->native(false)
-                                    ->displayFormat('d/m/Y H:i')
-                                    ->format('Y-m-d H:i:s'),
-                                DateTimePicker::make('event_date_end')
-                                    ->required()
-                                    ->native(false)
-                                    ->displayFormat('d/m/Y H:i')
-                                    ->format('Y-m-d H:i:s')
-                                    ->live()
-                                    ->afterStateUpdated(function ($state, $set) {
-                                        if ($state && Carbon::parse($state)->isPast()) {
-                                            $set('event_is_active', false);
-                                        }
-                                    }),
-                                Select::make('event_type')
-                                    ->label('Event Type')
-                                    ->placeholder('Pilih minimal 1 opsi')
-                                    ->multiple()
-                                    ->options([
-                                        'Online' => 'Online',
-                                        'Offline' => 'Offline',
-                                    ])
-                                    ->required(),
-                            ])->columns(3),
-                        Group::make()
-                            ->schema([
-                                RichEditor::make('event_description')
-                                    ->toolbarButtons([
-                                        'attachFiles',
-                                        'blockquote',
-                                        'bold',
-                                        'bulletList',
-                                        'codeBlock',
-                                        'h2',
-                                        'h3',
-                                        'italic',
-                                        'link',
-                                        'orderedList',
-                                        'redo',
-                                        'strike',
-                                        'underline',
-                                        'undo',
-                                    ])
-                                    ->required()
-                                    ->fileAttachmentsDisk('public')
-                                    ->fileAttachmentsDirectory('img_events')
-                                    ->fileAttachmentsVisibility('public')
-                                    ->columnSpan(1),
+                Wizard::make([
 
-                                FileUpload::make('event_image')
-                                    ->image()
-                                    ->disk('public')
-                                    ->directory('img_events')
-                                    ->required()
-                                    ->optimize('webp')
-                                    ->downloadable()
-                                    ->imageEditor()
-                                    ->imageEditorAspectRatios([
-                                        '16:9',
-                                        '4:3',
-                                        '1:1',
-                                    ])
-                                    ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
-                                        $title = $get('event_title') ?? 'event';
-                                        $slug = Str::of($title)
-                                            ->lower()
-                                            ->replace(' ', '_')
-                                            ->slug('_');
-                                        return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
-                                    })
-                                    ->columnSpan(1),
-                            ])->columns(2),
-                        Textarea::make('event_location')
-                            ->placeholder('Jl. Raya, No. 1, Kelurahan, Kecamatan, Kota, Provinsi')
-                            ->required()
-                            ->maxLength(255)
-                            ->rows(3),
-                    ]),
+                    // ===================== STEP 1 =====================
+                    Step::make('Informasi Dasar')
+                        ->description('Judul, kategori, harga, kuota')
+                        ->icon('heroicon-o-information-circle')
+                        ->columns(2)
+                        ->schema([
+                            TextInput::make('event_title')
+                                ->label('Judul Event')
+                                ->placeholder('Contoh: Workshop Perizinan Usaha 2026')
+                                ->live(onBlur: true)
+                                ->afterStateUpdated(fn(Set $set, ?string $state) => $set('event_slug', Str::slug($state)))
+                                ->required()
+                                ->maxLength(255)
+                                ->columnSpanFull(),
+
+                            TextInput::make('event_slug')
+                                ->label('Slug (URL)')
+                                ->placeholder('Terisi otomatis dari judul')
+                                ->prefixIcon('heroicon-o-link')
+                                ->helperText('Terisi otomatis sesuai judul.')
+                                ->readOnly()
+                                ->dehydrated()
+                                ->required()
+                                ->unique(ignoreRecord: true)
+                                ->maxLength(255)
+                                ->columnSpanFull(),
+
+                            Select::make('event_category_uuid')
+                                ->label('Kategori Event')
+                                ->relationship(name: 'eventCategory', titleAttribute: 'event_category_name')
+                                ->searchable()
+                                ->preload()
+                                ->createOptionForm([
+                                    TextInput::make('event_category_name')
+                                        ->label('Nama Kategori')
+                                        ->live(onBlur: true)
+                                        ->afterStateUpdated(fn(Set $set, ?string $state) => $set('event_category_slug', Str::slug($state)))
+                                        ->required()
+                                        ->maxLength(255),
+                                    TextInput::make('event_category_slug')
+                                        ->label('Slug Kategori')
+                                        ->required()
+                                        ->maxLength(255),
+                                ])
+                                ->helperText('Belum ada kategori? Klik tanda + untuk membuat baru.')
+                                ->required()
+                                ->columnSpanFull(),
+
+                            TextInput::make('event_price')
+                                ->label('Harga Tiket')
+                                ->prefix('Rp')
+                                ->placeholder('0')
+                                ->mask(RawJs::make('$money($input, \',\', \'.\', 0)'))
+                                ->stripCharacters('.')
+                                ->numeric()
+                                ->minValue(0)
+                                ->helperText('Isi 0 jika event gratis.')
+                                ->required(),
+
+                            TextInput::make('event_quota')
+                                ->label('Kuota Peserta')
+                                ->placeholder('200')
+                                ->suffix('orang')
+                                ->numeric()
+                                ->minValue(0)
+                                ->required(),
+                        ]),
+
+                    // ===================== STEP 2 =====================
+                    Step::make('Jadwal & Lokasi')
+                        ->description('Waktu dan tipe event')
+                        ->icon('heroicon-o-calendar-days')
+                        ->columns(2)
+                        ->schema([
+                            DateTimePicker::make('event_date_start')
+                                ->label('Mulai')
+                                ->native(false)
+                                ->seconds(false)
+                                ->displayFormat('d/m/Y H:i')
+                                ->format('Y-m-d H:i:s')
+                                ->prefixIcon('heroicon-o-play')
+                                ->live()
+                                ->required(),
+
+                            DateTimePicker::make('event_date_end')
+                                ->label('Selesai')
+                                ->native(false)
+                                ->seconds(false)
+                                ->displayFormat('d/m/Y H:i')
+                                ->format('Y-m-d H:i:s')
+                                ->prefixIcon('heroicon-o-stop')
+                                ->after('event_date_start')
+                                ->live()
+                                ->afterStateUpdated(function ($state, $set) {
+                                    if ($state && Carbon::parse($state)->isPast()) {
+                                        $set('event_is_active', false);
+                                    }
+                                })
+                                ->required(),
+
+                            ToggleButtons::make('event_type')
+                                ->label('Tipe Event')
+                                ->multiple()
+                                ->inline()
+                                ->options([
+                                    'Online'  => 'Online',
+                                    'Offline' => 'Offline',
+                                ])
+                                ->icons([
+                                    'Online'  => 'heroicon-o-video-camera',
+                                    'Offline' => 'heroicon-o-map-pin',
+                                ])
+                                ->colors([
+                                    'Online'  => 'info',
+                                    'Offline' => 'success',
+                                ])
+                                ->helperText('Pilih minimal satu. Bisa keduanya (hybrid).')
+                                ->live()
+                                ->required()
+                                ->columnSpanFull(),
+
+                            Textarea::make('event_location')
+                                ->label('Alamat Lokasi')
+                                ->placeholder('Jl. Raya No. 1, Kelurahan, Kecamatan, Kota, Provinsi')
+                                ->rows(3)
+                                ->maxLength(255)
+                                ->visible(fn(Get $get) => in_array('Offline', (array) $get('event_type')))
+                                ->required(fn(Get $get) => in_array('Offline', (array) $get('event_type')))
+                                ->columnSpanFull(),
+                        ]),
+
+                    // ===================== STEP 3 =====================
+                    Step::make('Pendaftaran & Gambar')
+                        ->description('Status, grup WhatsApp, poster')
+                        ->icon('heroicon-o-ticket')
+                        ->schema([
+                            Toggle::make('event_is_active')
+                                ->label('Buka Pendaftaran')
+                                ->helperText('Otomatis nonaktif jika event sudah lewat.')
+                                ->onColor('success')
+                                ->offColor('danger')
+                                ->live()
+                                ->disabled(
+                                    fn($get) => $get('event_date_end') &&
+                                        Carbon::parse($get('event_date_end'))->isPast()
+                                )
+                                ->afterStateHydrated(function ($set, $get) {
+                                    $endDate = $get('event_date_end');
+                                    if ($endDate && Carbon::parse($endDate)->isPast()) {
+                                        $set('event_is_active', false);
+                                    }
+                                }),
+
+                            TextInput::make('event_link')
+                                ->label('Link Grup WhatsApp')
+                                ->placeholder('https://chat.whatsapp.com/KODE_UNDANGAN')
+                                ->prefixIcon('heroicon-o-chat-bubble-left-right')
+                                ->url()
+                                ->regex('/^https:\/\/chat\.whatsapp\.com\/.+$/')
+                                ->validationMessages([
+                                    'regex' => 'Gunakan link undangan grup WhatsApp (https://chat.whatsapp.com/...).',
+                                ])
+                                ->helperText('Dikirim ke peserta setelah pendaftaran.')
+                                ->maxLength(255)
+                                ->required(),
+
+                            FileUpload::make('event_image')
+                                ->label('Gambar Event')
+                                ->image()
+                                ->disk('public')
+                                ->directory('img_events')
+                                ->optimize('webp')
+                                ->maxSize(2048)
+                                ->downloadable()
+                                ->imageEditor()
+                                ->imageEditorAspectRatios(['16:9', '4:3', '1:1'])
+                                ->imagePreviewHeight('180')
+                                ->helperText('Rasio 16:9 disarankan, maks. 2 MB.')
+                                ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
+                                    $slug = Str::of($get('event_title') ?? 'event')->lower()->slug('_');
+                                    return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
+                                })
+                                ->required(),
+                        ]),
+
+                    // ===================== STEP 4 =====================
+                    Step::make('Deskripsi')
+                        ->description('Isi lengkap event')
+                        ->icon('heroicon-o-document-text')
+                        ->schema([
+                            RichEditor::make('event_description')
+                                ->hiddenLabel()
+                                ->toolbarButtons([
+                                    'attachFiles',
+                                    'blockquote',
+                                    'bold',
+                                    'bulletList',
+                                    'codeBlock',
+                                    'h2',
+                                    'h3',
+                                    'italic',
+                                    'link',
+                                    'orderedList',
+                                    'redo',
+                                    'strike',
+                                    'underline',
+                                    'undo',
+                                ])
+                                ->fileAttachmentsDisk('public')
+                                ->fileAttachmentsDirectory('img_events')
+                                ->fileAttachmentsVisibility('public')
+                                ->extraInputAttributes(['style' => 'min-height: 32rem;'])
+                                ->required()
+                                ->columnSpanFull(),
+                        ]),
+                ])
+                    ->columnSpanFull()
+                    ->persistStepInQueryString()
+                    // saat edit, boleh lompat antar step tanpa harus berurutan
+                    ->skippable(fn(string $operation) => $operation === 'edit')
+                    ->submitAction(new HtmlString(Blade::render(<<<'BLADE'
+                        <x-filament::button type="submit" size="sm" icon="heroicon-m-check">
+                            Simpan Event
+                        </x-filament::button>
+                    BLADE))),
             ]);
     }
 
@@ -327,7 +407,7 @@ class EventResource extends Resource
                     ->icon('heroicon-o-globe-alt')
                     ->url(fn($record): string => route('event-detail', ['event_slug' => $record->event_slug]))
                     ->openUrlInNewTab()
-                    ->color('primary')
+                    ->color('success')
                     ->tooltip('View this event on the public website'),
             ])
             ->bulkActions([

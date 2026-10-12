@@ -16,6 +16,7 @@ use App\Models\Order;
 use App\Models\Property;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Fluent;
@@ -106,7 +107,7 @@ class LandingpageController extends Controller
             'reviews' => (new Review())->getReview(),
             'members' => (new User())->getMembers(),
             'consultants' => (new User())->getconsultants(),
-            'heroes' => (new Hero())->getAssets(),
+            'heroes' => Cache::remember('landing.heroes', now()->addHours(6), fn() => (new Hero())->getAssets()),
             'properties' => (new Property())->getProperties(),
             'agencies_footer' => (new Partner())->getAgencies(),
 
@@ -152,6 +153,18 @@ class LandingpageController extends Controller
                 'eventData' => []
             ], 500);
         }
+    }
+
+    public function aboutUs()
+    {
+        $info = (new Info)->getInfo() ?? new Info;
+
+        return view('front-end.about-us', [
+            'title'           => 'Tentang Kami | ' . config('app.name'),
+            'infos'           => $info,
+            'about'           => $info->aboutPage(),
+            'agencies_footer' => (new Partner)->getAgencies(),
+        ]);
     }
 
     public function toss($slug)

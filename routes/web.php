@@ -23,6 +23,7 @@ Route::controller(LandingpageController::class)->group(function () {
     Route::get('/review', 'review')->name('review-more');
     Route::get('/toss/{slug}', 'toss')->name('toss');
     Route::get('/certificate/{slug}', 'certificate')->name('certificate');
+    Route::get('/about-us', 'aboutUs')->name('about-us');
 });
 
 Route::controller(ArticleController::class)->group(function () {
@@ -86,7 +87,7 @@ Route::middleware(['auth'])->group(function () {
 });
 
 Route::get('/robots.txt', RobotsController::class)->name('robots');
-Route::get('/sitemap.xml', [SitemapController::class, 'index'])->name('sitemap');
+Route::get('/sitemap.xml', SitemapController::class)->name('sitemap');
 
 // additional
 Route::get('clear', function () {

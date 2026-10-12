@@ -6,14 +6,13 @@ use App\Exports\PartnersExport;
 use App\Filament\Resources\PartnerResource\Pages;
 use App\Models\Info;
 use App\Models\Partner;
-use Filament\Forms\Components\Card;
 use Filament\Forms\Components\FileUpload;
-use Filament\Forms\Components\Group;
 use Filament\Forms\Components\RichEditor;
-use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Section;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\ToggleButtons;
 use Filament\Forms\Form;
+use Filament\Forms\Get;
 use Filament\Forms\Set;
 use Filament\Resources\Resource;
 use Filament\Tables\Actions\Action;
@@ -40,92 +39,192 @@ class PartnerResource extends Resource
     public static function form(Form $form): Form
     {
         return $form
+            ->columns(3)
             ->schema([
-                Card::make()
+
+                // ================= KOLOM KIRI =================
+                \Filament\Forms\Components\Grid::make(1)
+                    ->columnSpan(['lg' => 2])
                     ->schema([
-                        Group::make()
+
+                        Section::make('Informasi Mitra')
+                            ->description('Nama, slug, dan jenis kemitraan.')
+                            ->icon('heroicon-o-building-office-2')
                             ->schema([
                                 TextInput::make('partner_name')
+                                    ->label('Nama Mitra')
+                                    ->placeholder('Contoh: PT Maju Bersama')
                                     ->live(onBlur: true)
                                     ->afterStateUpdated(fn(Set $set, ?string $state) => $set('partner_slug', Str::slug($state)))
-                                    ->required(),
-                                TextInput::make('partner_slug')
                                     ->required()
-                                    ->placeholder('Auto Generated'),
-                                Select::make('partner_type')
-                                    ->label('Partner Type')
-                                    ->placeholder('Pilih minimal 1 opsi')
+                                    ->maxLength(255),
+
+                                TextInput::make('partner_slug')
+                                    ->label('Slug (URL)')
+                                    ->placeholder('Terisi otomatis dari nama')
+                                    ->prefixIcon('heroicon-o-link')
+                                    ->helperText('Terisi otomatis sesuai nama mitra.')
+                                    ->readOnly()
+                                    ->dehydrated()
+                                    ->required()
+                                    ->maxLength(255),
+
+                                ToggleButtons::make('partner_type')
+                                    ->label('Jenis Mitra')
                                     ->multiple()
+                                    ->inline()
                                     ->options([
-                                        'Client' => 'Client',
+                                        'Client'   => 'Client',
                                         'Supplier' => 'Supplier',
                                     ])
+                                    ->icons([
+                                        'Client'   => 'heroicon-o-user-group',
+                                        'Supplier' => 'heroicon-o-truck',
+                                    ])
+                                    ->colors([
+                                        'Client'   => 'primary',
+                                        'Supplier' => 'danger',
+                                    ])
+                                    ->helperText('Pilih minimal satu. Bisa keduanya.')
                                     ->required(),
-                            ])->columns(3),
-                        Group::make()
+                            ]),
+
+                        Section::make('Kontak')
+                            ->description('Telepon, email, dan website mitra.')
+                            ->icon('heroicon-o-phone')
+                            ->columns(2)
                             ->schema([
                                 TextInput::make('partner_phone')
+                                    ->label('Telepon')
                                     ->tel()
+                                    ->placeholder('08123456789')
+                                    ->prefixIcon('heroicon-o-phone')
                                     ->required()
                                     ->maxLength(255),
+
                                 TextInput::make('partner_email')
+                                    ->label('Email')
                                     ->email()
                                     ->placeholder('example@gmail.com')
+                                    ->prefixIcon('heroicon-o-envelope')
                                     ->required()
                                     ->maxLength(255),
+
                                 TextInput::make('partner_url')
+                                    ->label('Website')
                                     ->url()
-                                    ->prefix('https://')
-                                    ->maxLength(255),
-                            ])->columns(3),
-                        Group::make()
+                                    ->placeholder('https://www.contoh.com')
+                                    ->prefixIcon('heroicon-o-globe-alt')
+                                    ->helperText('Opsional. Tulis lengkap dengan https://')
+                                    ->maxLength(255)
+                                    ->columnSpanFull(),
+                            ]),
+
+                        Section::make('Dokumen Legal')
+                            ->description('Unggah NIB dan NPWP mitra (opsional).')
+                            ->icon('heroicon-o-document-check')
+                            ->columns(2)
+                            ->schema([
+                                FileUpload::make('partner_NIB')
+                                    ->label('NIB')
+                                    ->disk('public')
+                                    ->directory('NIB_partners')
+                                    ->downloadable()
+                                    ->dehydrated()
+                                    ->maxSize(5120)
+                                    ->helperText('Maks. 5 MB.')
+                                    ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
+                                        $slug = Str::of('partner_NIB_' . ($get('partner_name') ?: 'partner_NIB'))
+                                            ->lower()
+                                            ->slug('_');
+                                        return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
+                                    }),
+
+                                FileUpload::make('partner_NPWP')
+                                    ->label('NPWP')
+                                    ->disk('public')
+                                    ->directory('NPWP_partners')
+                                    ->downloadable()
+                                    ->dehydrated()
+                                    ->maxSize(5120)
+                                    ->helperText('Maks. 5 MB.')
+                                    ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
+                                        $slug = Str::of('partner_NPWP_' . ($get('partner_name') ?: 'partner_NPWP'))
+                                            ->lower()
+                                            ->slug('_');
+                                        return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
+                                    }),
+                            ]),
+                    ]),
+
+                // ================= KOLOM KANAN (sidebar) =================
+                \Filament\Forms\Components\Grid::make(1)
+                    ->columnSpan(['lg' => 1])
+                    ->schema([
+
+                        Section::make('Status')
+                            ->icon('heroicon-o-signal')
                             ->schema([
                                 ToggleButtons::make('partner_status')
+                                    ->label('Status Mitra')
                                     ->options([
-                                        'Active' => 'Active',
+                                        'Active'   => 'Active',
                                         'Inactive' => 'Inactive',
                                     ])
                                     ->colors([
-                                        'Active' => 'success',
-                                        'Inactive' => 'danger',
-                                    ])->grouped()
-                                    ->required(),
-                                ToggleButtons::make('partner_footer_status')
-                                    ->label('Footer Status')
-                                    ->options([
-                                        'Active' => 'Active',
-                                        'Inactive' => 'Inactive',
-                                    ])
-                                    ->colors([
-                                        'Active' => 'success',
+                                        'Active'   => 'success',
                                         'Inactive' => 'danger',
                                     ])
                                     ->grouped()
+                                    ->live()
+                                    ->required(),
+
+                                ToggleButtons::make('partner_footer_status')
+                                    ->label('Tampil di Footer')
+                                    ->options([
+                                        'Active'   => 'Active',
+                                        'Inactive' => 'Inactive',
+                                    ])
+                                    ->colors([
+                                        'Active'   => 'success',
+                                        'Inactive' => 'danger',
+                                    ])
+                                    ->grouped()
+                                    ->helperText('Mitra harus Active. Maksimal 6 mitra tampil di footer.')
                                     ->required()
-                                    ->rule(function ($record) {
-                                        return function ($_, $value, $fail) use ($record) {
-                                            if ($value === 'Active') {
-                                                $partnerStatus = $record->partner_status ?? request('partner_status');
-                                                if ($partnerStatus !== 'Active') {
-                                                    $fail('Partner harus Active terlebih dahulu.');
-                                                    return;
-                                                }
-                                                $query = Partner::where('partner_footer_status', 'Active');
-                                                if ($record) {
-                                                    $query->where('uuid', '!=', $record->uuid);
-                                                }
-                                                if ($query->count() >= 6) {
-                                                    $fail('Maksimal hanya 6 data yang boleh Active.');
-                                                }
+                                    ->rule(function ($record, Get $get) {
+                                        return function ($_, $value, $fail) use ($record, $get) {
+                                            if ($value !== 'Active') {
+                                                return;
+                                            }
+
+                                            $partnerStatus = $get('partner_status') ?? $record?->partner_status;
+                                            if ($partnerStatus !== 'Active') {
+                                                $fail('Partner harus Active terlebih dahulu.');
+                                                return;
+                                            }
+
+                                            $query = Partner::where('partner_footer_status', 'Active');
+                                            if ($record) {
+                                                $query->where('uuid', '!=', $record->uuid);
+                                            }
+                                            if ($query->count() >= 6) {
+                                                $fail('Maksimal hanya 6 data yang boleh Active.');
                                             }
                                         };
                                     }),
+                            ]),
+
+                        Section::make('Logo / Gambar')
+                            ->icon('heroicon-o-photo')
+                            ->schema([
                                 FileUpload::make('partner_image')
+                                    ->hiddenLabel()
                                     ->image()
                                     ->disk('public')
-                                    ->optimize('webp')
                                     ->directory('img_partners')
-                                    ->required()
+                                    ->optimize('webp')
+                                    ->maxSize(2048)
                                     ->downloadable()
                                     ->imageEditor()
                                     ->imageEditorAspectRatios([
@@ -133,69 +232,50 @@ class PartnerResource extends Resource
                                         '4:3',
                                         '1:1',
                                     ])
+                                    ->imagePreviewHeight('160')
+                                    ->helperText('Maks. 2 MB.')
                                     ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
-                                        $name = 'partner_' . $get('partner_name') ?: 'partner';
-                                        $slug = Str::of($name)
+                                        $slug = Str::of('partner_' . ($get('partner_name') ?: 'partner'))
                                             ->lower()
-                                            ->replace(' ', '_')
                                             ->slug('_');
                                         return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
-                                    }),
-                            ])->columns(2),
-                        Group::make()
-                            ->schema([
-                                FileUpload::make('partner_NIB')
-                                    ->label('partner NIB')
-                                    ->disk('public')
-                                    ->directory('NIB_partners')
-                                    ->downloadable()
-                                    ->dehydrated()
-                                    ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
-                                        $name = 'partner_NIB_' . $get('partner_name') ?: 'partner_NIB';
-                                        $slug = Str::of($name)
-                                            ->lower()
-                                            ->replace(' ', '_')
-                                            ->slug('_');
-                                        return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
-                                    }),
-                                FileUpload::make('partner_NPWP')
-                                    ->label('partner NPWP')
-                                    ->disk('public')
-                                    ->directory('NPWP_partners')
-                                    ->downloadable()
-                                    ->dehydrated()
-                                    ->getUploadedFileNameForStorageUsing(function (TemporaryUploadedFile $file, $get): string {
-                                        $name = 'partner_NPWP_' . $get('partner_name') ?: 'partner_NPWP';
-                                        $slug = Str::of($name)
-                                            ->lower()
-                                            ->replace(' ', '_')
-                                            ->slug('_');
-                                        return $slug . '_' . time() . '.' . $file->getClientOriginalExtension();
-                                    }),
-                            ])->columns(2),
-                        Group::make()
-                            ->schema([
-                                RichEditor::make('partner_description')
-                                    ->toolbarButtons([
-                                        'bold',
-                                        'bulletList',
-                                        'link',
-                                        'orderedList',
-                                        'underline',
-                                        'undo',
-                                    ])
+                                    })
                                     ->required(),
-                                RichEditor::make('partner_address')
-                                    ->toolbarButtons([
-                                        'bold',
-                                        'bulletList',
-                                        'link',
-                                        'orderedList',
-                                        'underline',
-                                        'undo',
-                                    ])
-                                    ->required(),
-                            ])->columns(2),
+                            ]),
+                    ]),
+
+                // ================= BARIS BAWAH: profil selebar penuh =================
+                Section::make('Profil Mitra')
+                    ->description('Deskripsi usaha dan alamat lengkap mitra.')
+                    ->icon('heroicon-o-document-text')
+                    ->columnSpanFull()
+                    ->columns(2)
+                    ->schema([
+                        RichEditor::make('partner_description')
+                            ->label('Deskripsi')
+                            ->toolbarButtons([
+                                'bold',
+                                'bulletList',
+                                'link',
+                                'orderedList',
+                                'underline',
+                                'undo',
+                            ])
+                            ->extraInputAttributes(['style' => 'min-height: 14rem;'])
+                            ->required(),
+
+                        RichEditor::make('partner_address')
+                            ->label('Alamat')
+                            ->toolbarButtons([
+                                'bold',
+                                'bulletList',
+                                'link',
+                                'orderedList',
+                                'underline',
+                                'undo',
+                            ])
+                            ->extraInputAttributes(['style' => 'min-height: 14rem;'])
+                            ->required(),
                     ]),
             ]);
     }
@@ -350,11 +430,6 @@ class PartnerResource extends Resource
                 TextColumn::make('partner_email')
                     ->label('EMAIL')
                     ->searchable()
-                    ->toggleable(isToggledHiddenByDefault: false),
-
-                TextColumn::make('partner_email')
-                    ->label('EMAIL')
-                    ->searchable()
                     ->url(fn($record) => $record->partner_email ? "mailto:{$record->partner_email}" : null)
                     ->openUrlInNewTab()
                     ->icon('heroicon-m-envelope')
@@ -379,6 +454,7 @@ class PartnerResource extends Resource
                     ->color(fn(string $state): string => match ($state) {
                         'Active' => 'success',
                         'Inactive' => 'danger',
+                        default => 'gray',
                     })
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: false),
@@ -393,6 +469,7 @@ class PartnerResource extends Resource
                     ->color(fn(string $state): string => match ($state) {
                         'Active' => 'success',
                         'Inactive' => 'danger',
+                        default => 'gray',
                     })
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: false),
